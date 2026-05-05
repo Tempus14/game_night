@@ -1,0 +1,2 @@
+"""Game night scoreboard application."""
+
