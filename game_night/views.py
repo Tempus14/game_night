@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from html import escape
 
@@ -13,20 +14,7 @@ from game_night.scoring import (
     validate_competition_ranking,
 )
 from game_night.storage import load_state, save_state
-
-
-TEAM_COLORS = [
-    "#2F80ED",
-    "#EB5757",
-    "#27AE60",
-    "#F2C94C",
-    "#9B51E0",
-    "#F2994A",
-    "#00A7A7",
-    "#4F4F4F",
-    "#D81B60",
-    "#6D4C41",
-]
+from game_night.theme import TEAM_COLORS
 
 
 def run_app() -> None:
@@ -77,19 +65,17 @@ def render_scoreboard(state: AppState) -> None:
 
     for row in rows:
         team_name = escape(row.team_name)
-        team_color = escape(row.team_color)
+        team_color = _safe_hex_color(row.team_color)
+        rank_class = _rank_class(row.rank)
         st.markdown(
             f"""
-            <div class="score-row">
-                <div class="rank">#{row.rank}</div>
+            <div class="score-row" style="--team-color: {team_color};">
+                <div class="rank {rank_class}">#{row.rank}</div>
                 <div class="team">
-                    <span class="color-dot"
-                        style="background: {team_color};"></span>
-                    <span style="color: black;">{team_name}</span>
+                    <span class="color-dot"></span>
+                    <span>{team_name}</span>
                 </div>
-                <div class="points" style="color: {team_color};">
-                    {row.total_points} Points
-                </div>
+                <div class="points">{row.total_points}</div>
                 <div class="meta">
                     {row.games_won} wins &middot; {row.games_played} played
                 </div>
@@ -267,6 +253,26 @@ def _persist(state: AppState) -> None:
     st.session_state.app_state = state
 
 
+def _safe_hex_color(color: str) -> str:
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        return color
+
+    return TEAM_COLORS[0]
+
+
+def _rank_class(rank: int) -> str:
+    if rank == 1:
+        return "rank-first"
+
+    if rank == 2:
+        return "rank-second"
+
+    if rank == 3:
+        return "rank-third"
+
+    return "rank-other"
+
+
 def _apply_styles() -> None:
     st.markdown(
         """
@@ -282,16 +288,22 @@ def _apply_styles() -> None:
             }
 
             .leader {
-                background: #101828;
-                color: white;
+                background:
+                    var(--blue-background-color, rgba(37, 99, 235, 0.16));
+                color: var(--text-color);
+                border:
+                    1px solid var(--border-color, rgba(148, 163, 184, 0.35));
+                border-left:
+                    0.5rem solid var(--primary-color, #2563eb);
                 padding: 1.5rem 1.8rem;
-                border-radius: 8px;
+                border-radius: var(--base-radius, 0.5rem);
                 margin-bottom: 1rem;
             }
 
             .leader-label {
-                color: #b7c0d1;
+                color: var(--text-color);
                 font-size: 0.95rem;
+                opacity: 0.72;
                 text-transform: uppercase;
             }
 
@@ -299,11 +311,13 @@ def _apply_styles() -> None:
                 font-size: 3rem;
                 font-weight: 800;
                 line-height: 1.1;
+                color: var(--text-color);
             }
 
             .leader-points {
                 font-size: 1.3rem;
-                color: #e5e7eb;
+                color: var(--text-color);
+                opacity: 0.82;
             }
 
             .score-row {
@@ -311,18 +325,49 @@ def _apply_styles() -> None:
                 grid-template-columns: 5rem 1fr 8rem 11rem;
                 align-items: center;
                 gap: 1rem;
-                background: white;
-                border: 1px solid #e6e8ee;
-                border-radius: 8px;
+                background: var(--secondary-background-color);
+                border:
+                    1px solid var(--border-color, rgba(148, 163, 184, 0.35));
+                border-left: 0.5rem solid var(--team-color);
+                border-radius: var(--base-radius, 0.5rem);
                 padding: 1rem 1.2rem;
                 margin-bottom: 0.7rem;
-                box-shadow: 0 4px 14px rgba(16, 24, 40, 0.06);
+                color: var(--text-color);
+                box-shadow: 0 0.35rem 1.1rem rgba(0, 0, 0, 0.12);
             }
 
             .rank {
+                align-items: center;
+                border-radius: var(--base-radius, 0.5rem);
+                display: flex;
                 font-size: 1.7rem;
                 font-weight: 800;
-                color: #101828;
+                justify-content: center;
+                min-height: 3rem;
+            }
+
+            .rank-first {
+                background:
+                    var(--green-background-color, rgba(22, 163, 74, 0.18));
+                color: var(--green-text-color, var(--text-color));
+            }
+
+            .rank-second {
+                background:
+                    var(--blue-background-color, rgba(37, 99, 235, 0.16));
+                color: var(--blue-text-color, var(--text-color));
+            }
+
+            .rank-third {
+                background:
+                    var(--orange-background-color, rgba(234, 88, 12, 0.18));
+                color: var(--orange-text-color, var(--text-color));
+            }
+
+            .rank-other {
+                background:
+                    var(--gray-background-color, rgba(100, 116, 139, 0.16));
+                color: var(--gray-text-color, var(--text-color));
             }
 
             .team {
@@ -332,6 +377,7 @@ def _apply_styles() -> None:
                 font-size: 1.6rem;
                 font-weight: 700;
                 min-width: 0;
+                color: var(--text-color);
             }
 
             .team span:last-child {
@@ -344,16 +390,19 @@ def _apply_styles() -> None:
                 height: 1.1rem;
                 border-radius: 50%;
                 flex: 0 0 auto;
+                background: var(--team-color);
             }
 
             .points {
                 font-size: 2rem;
                 font-weight: 800;
                 text-align: right;
+                color: var(--text-color);
             }
 
             .meta {
-                color: #667085;
+                color: var(--text-color);
+                opacity: 0.7;
                 text-align: right;
             }
 

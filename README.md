@@ -25,6 +25,14 @@ On Windows you can also run:
 The app stores its state in `data/state.json` and writes timestamped backups to
 `data/backups/` after saves.
 
+## Theme
+
+Change app colors in `.streamlit/config.toml`. The custom scoreboard CSS uses
+Streamlit's own theme variables, including the basic color palette, so it
+follows the configured Streamlit theme.
+
+Use `game_night/theme.py` only for default team colors.
+
 ## Current Features
 
 - Configure teams at the start of the evening.
