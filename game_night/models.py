@@ -38,6 +38,31 @@ class GameResult:
     mode: str
     ranking: dict[str, int]
     awarded_points: dict[str, int]
+    input_mode: str = "point"
+    game_points: dict[str, int] = field(default_factory=dict)
+    rounds: list[dict[str, int]] = field(default_factory=list)
+
+    @classmethod
+    def create(
+        cls,
+        name: str,
+        mode: str,
+        ranking: dict[str, int],
+        awarded_points: dict[str, int],
+        input_mode: str = "point",
+        game_points: dict[str, int] | None = None,
+        rounds: list[dict[str, int]] | None = None,
+    ) -> "GameResult":
+        return cls(
+            id=new_id("game"),
+            name=name.strip(),
+            mode=mode,
+            ranking=ranking,
+            awarded_points=awarded_points,
+            input_mode=input_mode,
+            game_points=game_points or {},
+            rounds=rounds or [],
+        )
 
     @classmethod
     def create_direct_ranking(
@@ -46,12 +71,12 @@ class GameResult:
         ranking: dict[str, int],
         awarded_points: dict[str, int],
     ) -> "GameResult":
-        return cls(
-            id=new_id("game"),
-            name=name.strip(),
-            mode="direct_ranking",
+        return cls.create(
+            name=name,
+            mode="simple",
             ranking=ranking,
             awarded_points=awarded_points,
+            input_mode="rank",
         )
 
     @classmethod
@@ -68,6 +93,18 @@ class GameResult:
                 str(team_id): int(points)
                 for team_id, points in data.get("awarded_points", {}).items()
             },
+            input_mode=str(data.get("input_mode", "rank")),
+            game_points={
+                str(team_id): int(points)
+                for team_id, points in data.get("game_points", {}).items()
+            },
+            rounds=[
+                {
+                    str(team_id): int(points)
+                    for team_id, points in round_scores.items()
+                }
+                for round_scores in data.get("rounds", [])
+            ],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -75,7 +112,10 @@ class GameResult:
             "id": self.id,
             "name": self.name,
             "mode": self.mode,
+            "input_mode": self.input_mode,
             "ranking": self.ranking,
+            "game_points": self.game_points,
+            "rounds": self.rounds,
             "awarded_points": self.awarded_points,
         }
 

@@ -74,6 +74,43 @@ def award_points(
     }
 
 
+def ranking_from_scores(
+    scores_by_team: dict[str, int],
+    *,
+    higher_is_better: bool = True,
+) -> dict[str, int]:
+    sorted_items = sorted(
+        scores_by_team.items(),
+        key=lambda item: (
+            -item[1] if higher_is_better else item[1],
+            item[0],
+        ),
+    )
+    sorted_scores = [score for _, score in sorted_items]
+    ranks = competition_ranks_for_scores(
+        sorted_scores,
+        higher_is_better=higher_is_better,
+    )
+
+    return {
+        team_id: rank
+        for (team_id, _), rank in zip(sorted_items, ranks)
+    }
+
+
+def sum_round_scores(
+    rounds: list[dict[str, int]],
+    team_ids: list[str],
+) -> dict[str, int]:
+    totals = {team_id: 0 for team_id in team_ids}
+
+    for round_scores in rounds:
+        for team_id in team_ids:
+            totals[team_id] += round_scores.get(team_id, 0)
+
+    return totals
+
+
 def build_scoreboard(state: AppState) -> list[ScoreboardRow]:
     totals = {team.id: 0 for team in state.teams}
     games_played = {team.id: 0 for team in state.teams}

@@ -2,6 +2,8 @@ from game_night.models import AppState, GameResult, Team
 from game_night.scoring import (
     award_points,
     build_scoreboard,
+    ranking_from_scores,
+    sum_round_scores,
     validate_competition_ranking,
 )
 
@@ -60,6 +62,25 @@ def test_award_points_gives_last_place_zero() -> None:
     points = award_points(ranks, 4)
 
     assert points == {"a": 3, "b": 2, "c": 2, "d": 0}
+
+
+def test_ranking_from_scores_uses_competition_ranking() -> None:
+    scores = {"a": 15, "b": 20, "c": 20, "d": 3}
+
+    ranking = ranking_from_scores(scores)
+
+    assert ranking == {"b": 1, "c": 1, "a": 3, "d": 4}
+
+
+def test_sum_round_scores_totals_each_team() -> None:
+    rounds = [
+        {"a": 2, "b": 4, "c": 0},
+        {"a": 5, "b": 1, "c": 3},
+    ]
+
+    totals = sum_round_scores(rounds, ["a", "b", "c"])
+
+    assert totals == {"a": 7, "b": 5, "c": 3}
 
 
 def test_build_scoreboard_uses_competition_ranking_for_total_ties() -> None:

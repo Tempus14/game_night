@@ -10,6 +10,8 @@ from game_night.models import AppState, GameResult, Team
 from game_night.scoring import (
     award_points,
     build_scoreboard,
+    ranking_from_scores,
+    sum_round_scores,
     team_name_by_id,
     validate_competition_ranking,
 )
@@ -27,7 +29,13 @@ def run_app() -> None:
 
     page = st.sidebar.radio(
         "View",
-        ["Scoreboard", "Teams", "Add Simple Game Result", "Game History"],
+        [
+            "Scoreboard",
+            "Teams",
+            "Add Simple Game Result",
+            "Add Multi-Round Game Result",
+            "Game History",
+        ],
     )
 
     if page == "Scoreboard":
@@ -36,6 +44,8 @@ def run_app() -> None:
         render_teams(st.session_state.app_state)
     elif page == "Add Simple Game Result":
         render_add_simple_game_result(st.session_state.app_state)
+    elif page == "Add Multi-Round Game Result":
+        render_add_multi_round_game_result(st.session_state.app_state)
     else:
         render_game_history(st.session_state.app_state)
 
@@ -137,29 +147,91 @@ def render_add_simple_game_result(state: AppState) -> None:
     form_column, scoreboard_column = st.columns([0.62, 0.38], gap="large")
 
     with form_column:
-        st.caption(
-            "Direct ranking supports ties with skipped places, for example "
-            "1, 2, 2, 4."
+        input_mode = st.radio(
+            "Input mode",
+            ["Point Mode", "Rank Mode"],
+            horizontal=True,
+            key="simple_input_mode",
         )
 
         with st.form("direct_ranking_game"):
             game_name = st.text_input("Game name")
-            ranks = {}
 
-            for team in state.teams:
-                ranks[team.id] = st.number_input(
-                    team.name,
-                    min_value=1,
-                    max_value=len(state.teams),
-                    value=1,
-                    step=1,
-                    key=f"rank_{team.id}",
+            if input_mode == "Rank Mode":
+                st.caption(
+                    "Ties are allowed with skipped places, for example "
+                    "1, 2, 2, 4."
                 )
+                inputs = _ranking_inputs(state, "simple_rank")
+            else:
+                st.caption(
+                    "Higher game points rank higher. Ties produce tied ranks."
+                )
+                inputs = _point_inputs(state, "simple_points")
 
             submitted = st.form_submit_button("Save result")
 
         if submitted:
-            _save_direct_ranking_game(state, game_name, ranks)
+            _save_simple_game(state, game_name, input_mode, inputs)
+
+    with scoreboard_column:
+        render_compact_scoreboard(state)
+
+
+def render_add_multi_round_game_result(state: AppState) -> None:
+    st.title("Add Multi-Round Game Result")
+
+    if len(state.teams) < 2:
+        st.info("Add at least two teams before saving game results.")
+        return
+
+    form_column, scoreboard_column = st.columns([0.62, 0.38], gap="large")
+
+    with form_column:
+        input_mode = st.radio(
+            "Input mode",
+            ["Point Mode", "Rank Mode"],
+            horizontal=True,
+            key="round_input_mode",
+        )
+        round_count = st.number_input(
+            "Rounds",
+            min_value=1,
+            max_value=20,
+            value=3,
+            step=1,
+        )
+
+        with st.form("multi_round_game"):
+            game_name = st.text_input("Game name")
+
+            if input_mode == "Point Mode":
+                st.caption(
+                    "Enter each team's points per round. Round totals are "
+                    "summed before the game ranking is calculated."
+                )
+                rounds = _round_point_inputs(
+                    state,
+                    "multi_round_points",
+                    int(round_count),
+                )
+                inputs = {"rounds": rounds}
+            else:
+                st.caption(
+                    "Use this if the final game ranking is already known. "
+                    "Ties are allowed with skipped places."
+                )
+                inputs = {
+                    "ranking": _ranking_inputs(
+                        state,
+                        "multi_round_rank",
+                    )
+                }
+
+            submitted = st.form_submit_button("Save result")
+
+        if submitted:
+            _save_multi_round_game(state, game_name, input_mode, inputs)
 
     with scoreboard_column:
         render_compact_scoreboard(state)
@@ -200,6 +272,54 @@ def render_compact_scoreboard(state: AppState) -> None:
         )
 
 
+def _ranking_inputs(state: AppState, key_prefix: str) -> dict[str, int]:
+    ranks = {}
+
+    for team in state.teams:
+        ranks[team.id] = st.number_input(
+            team.name,
+            min_value=1,
+            max_value=len(state.teams),
+            value=1,
+            step=1,
+            key=f"{key_prefix}_{team.id}",
+        )
+
+    return ranks
+
+
+def _point_inputs(state: AppState, key_prefix: str) -> dict[str, int]:
+    points = {}
+
+    for team in state.teams:
+        points[team.id] = st.number_input(
+            team.name,
+            min_value=0,
+            value=0,
+            step=1,
+            key=f"{key_prefix}_{team.id}",
+        )
+
+    return points
+
+
+def _round_point_inputs(
+    state: AppState,
+    key_prefix: str,
+    round_count: int,
+) -> list[dict[str, int]]:
+    rounds = []
+    tabs = st.tabs([f"Round {number}" for number in range(1, round_count + 1)])
+
+    for index, tab in enumerate(tabs, start=1):
+        with tab:
+            rounds.append(
+                _point_inputs(state, f"{key_prefix}_{index}")
+            )
+
+    return rounds
+
+
 def render_game_history(state: AppState) -> None:
     st.title("Game History")
 
@@ -218,9 +338,14 @@ def render_game_history(state: AppState) -> None:
 
             for team_id, rank in rows:
                 points = game.awarded_points.get(team_id, 0)
+                game_points = game.game_points.get(team_id)
+                detail = ""
+                if game_points is not None:
+                    detail = f" - game points: {game_points}"
+
                 st.write(
                     f"#{rank} - {names.get(team_id, team_id)} - "
-                    f"{points} points"
+                    f"{points} evening points{detail}"
                 )
 
 
@@ -252,10 +377,11 @@ def _remove_team(state: AppState, team_id: str) -> None:
     _persist(next_state)
 
 
-def _save_direct_ranking_game(
+def _save_simple_game(
     state: AppState,
     game_name: str,
-    ranks: dict[str, int],
+    input_mode: str,
+    inputs: dict[str, int],
 ) -> None:
     normalized_name = game_name.strip()
 
@@ -263,20 +389,88 @@ def _save_direct_ranking_game(
         st.error("Game name cannot be empty.")
         return
 
-    validation = validate_competition_ranking(
-        ranks,
-        [team.id for team in state.teams],
-    )
+    if input_mode == "Rank Mode":
+        ranking = inputs
+        validation = validate_competition_ranking(
+            ranking,
+            [team.id for team in state.teams],
+        )
 
-    if not validation.is_valid:
-        st.error(validation.message)
+        if not validation.is_valid:
+            st.error(validation.message)
+            return
+
+        game_points = {}
+        stored_input_mode = "rank"
+    else:
+        ranking = ranking_from_scores(inputs)
+        game_points = inputs
+        stored_input_mode = "points"
+
+    points = award_points(ranking, len(state.teams))
+    game = GameResult.create(
+        name=normalized_name,
+        mode="simple",
+        input_mode=stored_input_mode,
+        ranking=ranking,
+        game_points=game_points,
+        awarded_points=points,
+    )
+    next_state = replace(state, games=[*state.games, game])
+    _persist(next_state)
+    st.success("Game result saved.")
+    st.rerun()
+
+
+def _save_multi_round_game(
+    state: AppState,
+    game_name: str,
+    input_mode: str,
+    inputs: dict[str, object],
+) -> None:
+    normalized_name = game_name.strip()
+    team_ids = [team.id for team in state.teams]
+
+    if not normalized_name:
+        st.error("Game name cannot be empty.")
         return
 
-    points = award_points(ranks, len(state.teams))
-    game = GameResult.create_direct_ranking(
-        normalized_name,
-        ranks,
-        points,
+    if input_mode == "Rank Mode":
+        ranking = inputs["ranking"]
+
+        if not isinstance(ranking, dict):
+            st.error("Invalid ranking input.")
+            return
+
+        validation = validate_competition_ranking(ranking, team_ids)
+
+        if not validation.is_valid:
+            st.error(validation.message)
+            return
+
+        rounds = []
+        game_points = {}
+        stored_input_mode = "rank"
+    else:
+        rounds = inputs["rounds"]
+
+        if not isinstance(rounds, list):
+            st.error("Invalid round input.")
+            return
+
+        game_points = sum_round_scores(rounds, team_ids)
+        ranking = ranking_from_scores(game_points)
+        stored_input_mode = "points"
+
+    points = award_points(ranking, len(state.teams))
+    game = GameResult.create(
+        name=normalized_name,
+        mode="multi_round",
+        input_mode=stored_input_mode,
+        ranking=ranking,
+        game_points=game_points,
+        rounds=rounds,
+        awarded_points=points,
     )
     next_state = replace(state, games=[*state.games, game])
     _persist(next_state)
