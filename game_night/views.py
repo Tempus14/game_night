@@ -15,7 +15,7 @@ from game_night.scoring import (
     team_name_by_id,
     validate_competition_ranking,
 )
-from game_night.storage import load_state, save_state
+from game_night.storage import load_state, save_state, write_backup
 from game_night.theme import TEAM_COLORS
 
 
@@ -135,6 +135,16 @@ def render_teams(state: AppState) -> None:
         if not state.games and cols[2].button("Remove", key=f"remove_{team.id}"):
             _remove_team(state, team.id)
             st.rerun()
+
+    st.divider()
+    st.subheader("Session Reset")
+    st.caption(
+        "Use this if you want to clear saved results or start the evening "
+        "from scratch."
+    )
+
+    if st.button("Reset Game Night Session"):
+        _reset_session_dialog(state)
 
 
 def render_add_simple_game_result(state: AppState) -> None:
@@ -331,6 +341,10 @@ def render_game_history(state: AppState) -> None:
 
     for game in reversed(state.games):
         with st.expander(game.name, expanded=False):
+            st.caption(
+                f"Mode: {game.mode.replace('_', ' ')} / "
+                f"{game.input_mode} input"
+            )
             rows = sorted(
                 game.ranking.items(),
                 key=lambda item: (item[1], names.get(item[0], item[0])),
@@ -347,6 +361,9 @@ def render_game_history(state: AppState) -> None:
                     f"#{rank} - {names.get(team_id, team_id)} - "
                     f"{points} evening points{detail}"
                 )
+
+            if st.button("Remove this entry", key=f"delete_game_{game.id}"):
+                _delete_game_dialog(state, game.id)
 
 
 def _add_team(state: AppState, name: str, color: str) -> None:
@@ -375,6 +392,88 @@ def _remove_team(state: AppState, team_id: str) -> None:
         teams=[team for team in state.teams if team.id != team_id],
     )
     _persist(next_state)
+
+
+@st.dialog("Remove Game History Entry")
+def _delete_game_dialog(state: AppState, game_id: str) -> None:
+    game = next((item for item in state.games if item.id == game_id), None)
+
+    if game is None:
+        st.error("This game entry no longer exists.")
+        if st.button("Close"):
+            st.rerun()
+        return
+
+    st.write(f"Remove `{game.name}` from the game history?")
+    st.warning(
+        "This will also remove this game's contribution from the evening "
+        "scoreboard."
+    )
+
+    columns = st.columns(2)
+
+    if columns[0].button("Remove entry", type="primary"):
+        _delete_game(state, game_id)
+        st.rerun()
+
+    if columns[1].button("Cancel"):
+        st.rerun()
+
+
+@st.dialog("Reset Game Night Session")
+def _reset_session_dialog(state: AppState) -> None:
+    choice = st.radio(
+        "Choose what to reset.",
+        [
+            "Continue with current game night",
+            "Reset results and keep teams",
+            "Reset whole session including teams",
+        ],
+    )
+
+    if choice == "Reset results and keep teams":
+        st.warning(
+            "All game history and evening points will be removed. Teams stay "
+            "configured."
+        )
+    elif choice == "Reset whole session including teams":
+        st.warning(
+            "All teams, game history, and evening points will be removed."
+        )
+    else:
+        st.info("No saved data will be changed.")
+
+    columns = st.columns(2)
+
+    if columns[0].button("Apply selection", type="primary"):
+        if choice == "Reset results and keep teams":
+            _reset_results(state)
+        elif choice == "Reset whole session including teams":
+            _reset_all()
+
+        st.rerun()
+
+    if columns[1].button("Cancel"):
+        st.rerun()
+
+
+def _delete_game(state: AppState, game_id: str) -> None:
+    write_backup()
+    next_state = replace(
+        state,
+        games=[game for game in state.games if game.id != game_id],
+    )
+    _persist(next_state)
+
+
+def _reset_results(state: AppState) -> None:
+    write_backup()
+    _persist(replace(state, games=[]))
+
+
+def _reset_all() -> None:
+    write_backup()
+    _persist(AppState())
 
 
 def _save_simple_game(
