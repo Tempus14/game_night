@@ -27,15 +27,15 @@ def run_app() -> None:
 
     page = st.sidebar.radio(
         "View",
-        ["Scoreboard", "Teams", "Add Game Result", "Game History"],
+        ["Scoreboard", "Teams", "Add Simple Game Result", "Game History"],
     )
 
     if page == "Scoreboard":
         render_scoreboard(st.session_state.app_state)
     elif page == "Teams":
         render_teams(st.session_state.app_state)
-    elif page == "Add Game Result":
-        render_add_game_result(st.session_state.app_state)
+    elif page == "Add Simple Game Result":
+        render_add_simple_game_result(st.session_state.app_state)
     else:
         render_game_history(st.session_state.app_state)
 
@@ -127,36 +127,77 @@ def render_teams(state: AppState) -> None:
             st.rerun()
 
 
-def render_add_game_result(state: AppState) -> None:
-    st.title("Add Game Result")
+def render_add_simple_game_result(state: AppState) -> None:
+    st.title("Add Simple Game Result")
 
     if len(state.teams) < 2:
         st.info("Add at least two teams before saving game results.")
         return
 
-    st.caption(
-        "Direct ranking supports ties with skipped places, for example "
-        "1, 2, 2, 4."
+    form_column, scoreboard_column = st.columns([0.62, 0.38], gap="large")
+
+    with form_column:
+        st.caption(
+            "Direct ranking supports ties with skipped places, for example "
+            "1, 2, 2, 4."
+        )
+
+        with st.form("direct_ranking_game"):
+            game_name = st.text_input("Game name")
+            ranks = {}
+
+            for team in state.teams:
+                ranks[team.id] = st.number_input(
+                    team.name,
+                    min_value=1,
+                    max_value=len(state.teams),
+                    value=1,
+                    step=1,
+                    key=f"rank_{team.id}",
+                )
+
+            submitted = st.form_submit_button("Save result")
+
+        if submitted:
+            _save_direct_ranking_game(state, game_name, ranks)
+
+    with scoreboard_column:
+        render_compact_scoreboard(state)
+
+
+def render_compact_scoreboard(state: AppState) -> None:
+    st.subheader("Evening Scoreboard")
+
+    rows = build_scoreboard(state)
+
+    st.markdown(
+        """
+        <div class="compact-scoreboard compact-scoreboard-header">
+            <div>Rank</div>
+            <div>Name</div>
+            <div>Points</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    with st.form("direct_ranking_game"):
-        game_name = st.text_input("Game name")
-        ranks = {}
-
-        for team in state.teams:
-            ranks[team.id] = st.number_input(
-                team.name,
-                min_value=1,
-                max_value=len(state.teams),
-                value=1,
-                step=1,
-                key=f"rank_{team.id}",
-            )
-
-        submitted = st.form_submit_button("Save result")
-
-    if submitted:
-        _save_direct_ranking_game(state, game_name, ranks)
+    for row in rows:
+        team_name = escape(row.team_name)
+        team_color = _safe_hex_color(row.team_color)
+        st.markdown(
+            f"""
+            <div class="compact-scoreboard compact-scoreboard-row"
+                style="--team-color: {team_color};">
+                <div>#{row.rank}</div>
+                <div class="compact-team-name">
+                    <span class="compact-color-dot"></span>
+                    <span>{team_name}</span>
+                </div>
+                <div>{row.total_points}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_game_history(state: AppState) -> None:
@@ -404,6 +445,60 @@ def _apply_styles() -> None:
                 color: var(--text-color);
                 opacity: 0.7;
                 text-align: right;
+            }
+
+            .compact-scoreboard {
+                display: grid;
+                grid-template-columns: 4rem minmax(0, 1fr) 4.5rem;
+                gap: 0.75rem;
+                align-items: center;
+            }
+
+            .compact-scoreboard-header {
+                color: var(--text-color);
+                font-size: 0.8rem;
+                font-weight: 700;
+                opacity: 0.7;
+                padding: 0 0.75rem 0.4rem 1rem;
+                text-transform: uppercase;
+            }
+
+            .compact-scoreboard-row {
+                background: var(--secondary-background-color);
+                border:
+                    1px solid var(--border-color, rgba(148, 163, 184, 0.35));
+                border-left: 0.35rem solid var(--team-color);
+                border-radius: var(--base-radius, 0.5rem);
+                color: var(--text-color);
+                font-weight: 700;
+                margin-bottom: 0.45rem;
+                padding: 0.65rem 0.75rem 0.65rem 0.75rem;
+            }
+
+            .compact-scoreboard-row div:last-child {
+                text-align: right;
+            }
+
+            .compact-team-name {
+                align-items: center;
+                display: flex;
+                gap: 0.5rem;
+                min-width: 0;
+            }
+
+            .compact-team-name span:last-child {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .compact-color-dot {
+                background: var(--team-color);
+                border-radius: 50%;
+                display: inline-block;
+                flex: 0 0 auto;
+                height: 0.7rem;
+                width: 0.7rem;
             }
 
             @media (max-width: 760px) {
