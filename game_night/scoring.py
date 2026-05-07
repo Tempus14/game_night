@@ -77,6 +77,50 @@ def award_points(
     }
 
 
+def tied_rank_groups(
+    ranks_by_team: dict[str, int],
+) -> list[tuple[int, list[str]]]:
+    groups: dict[int, list[str]] = {}
+
+    for team_id, rank in ranks_by_team.items():
+        groups.setdefault(rank, []).append(team_id)
+
+    return [
+        (rank, sorted(team_ids))
+        for rank, team_ids in sorted(groups.items())
+        if len(team_ids) > 1
+    ]
+
+
+def resolve_tied_ranking(
+    ranks_by_team: dict[str, int],
+    tie_break_places: dict[int, dict[str, int]],
+) -> dict[str, int]:
+    resolved = dict(ranks_by_team)
+
+    for rank, places_by_team in tie_break_places.items():
+        tied_team_ids = {
+            team_id
+            for team_id, team_rank in ranks_by_team.items()
+            if team_rank == rank
+        }
+        submitted_team_ids = set(places_by_team)
+
+        if submitted_team_ids != tied_team_ids:
+            raise ValueError("Tie-break places must cover the tied teams.")
+
+        places = sorted(places_by_team.values())
+        expected_places = list(range(1, len(tied_team_ids) + 1))
+
+        if places != expected_places:
+            raise ValueError("Tie-break places must be unique and consecutive.")
+
+        for team_id, place in places_by_team.items():
+            resolved[team_id] = rank + place - 1
+
+    return resolved
+
+
 def ranking_from_scores(
     scores_by_team: dict[str, Number],
     *,

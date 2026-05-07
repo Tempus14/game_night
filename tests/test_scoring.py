@@ -7,7 +7,9 @@ from game_night.scoring import (
     cutting_penalty,
     cutting_round_winner_points,
     ranking_from_scores,
+    resolve_tied_ranking,
     sum_round_scores,
+    tied_rank_groups,
     validate_competition_ranking,
 )
 
@@ -82,6 +84,35 @@ def test_ranking_from_penalty_scores_uses_lower_scores_as_better() -> None:
     ranking = ranking_from_scores(scores, higher_is_better=False)
 
     assert ranking == {"b": 1, "c": 1, "a": 3, "d": 4}
+
+
+def test_tied_rank_groups_finds_multiple_ties() -> None:
+    ranks = {"a": 1, "b": 1, "c": 3, "d": 4, "e": 4}
+
+    groups = tied_rank_groups(ranks)
+
+    assert groups == [(1, ["a", "b"]), (4, ["d", "e"])]
+
+
+def test_resolve_tied_ranking_expands_tied_rank_slots() -> None:
+    ranks = {"a": 1, "b": 1, "c": 3, "d": 3, "e": 5}
+
+    resolved = resolve_tied_ranking(
+        ranks,
+        {
+            1: {"b": 1, "a": 2},
+            3: {"d": 1, "c": 2},
+        },
+    )
+
+    assert resolved == {"a": 2, "b": 1, "c": 4, "d": 3, "e": 5}
+
+
+def test_resolve_tied_ranking_rejects_duplicate_places() -> None:
+    ranks = {"a": 1, "b": 1, "c": 3}
+
+    with pytest.raises(ValueError):
+        resolve_tied_ranking(ranks, {1: {"a": 1, "b": 1}})
 
 
 def test_sum_round_scores_totals_each_team() -> None:

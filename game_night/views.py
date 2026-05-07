@@ -14,12 +14,24 @@ from game_night.scoring import (
     cutting_round_penalties,
     cutting_round_winner_points,
     ranking_from_scores,
+    resolve_tied_ranking,
     sum_round_scores,
     team_name_by_id,
+    tied_rank_groups,
     validate_competition_ranking,
 )
 from game_night.storage import load_state, save_state, write_backup
 from game_night.theme import TEAM_COLORS
+
+
+PAGES = [
+    "Scoreboard",
+    "Teams",
+    "Add Simple Game",
+    "Add Multi-Round Game",
+    "Add Cutting Game",
+    "Game History",
+]
 
 
 def run_app() -> None:
@@ -29,17 +41,12 @@ def run_app() -> None:
     )
     _apply_styles()
     _ensure_state()
+    _apply_pending_navigation()
 
     page = st.sidebar.radio(
         "View",
-        [
-            "Scoreboard",
-            "Teams",
-            "Add Simple Game",
-            "Add Multi-Round Game",
-            "Add Cutting Game",
-            "Game History",
-        ],
+        PAGES,
+        key="selected_view",
     )
 
     if page == "Scoreboard":
@@ -751,6 +758,123 @@ def _reset_all() -> None:
     _persist(AppState())
 
 
+def _save_game_result(state: AppState, game: GameResult) -> None:
+    if tied_rank_groups(game.ranking):
+        _tie_resolution_dialog(state, game)
+        return
+
+    _commit_game_result(state, game)
+
+
+def _commit_game_result(state: AppState, game: GameResult) -> None:
+    next_state = replace(state, games=[*state.games, game])
+    _persist(next_state)
+    st.session_state["_target_view"] = "Scoreboard"
+    st.rerun()
+
+
+@st.dialog("Tie detected")
+def _tie_resolution_dialog(state: AppState, game: GameResult) -> None:
+    tied_groups = tied_rank_groups(game.ranking)
+    team_names = team_name_by_id(state.teams)
+
+    st.write(
+        "This game result contains at least one tie. You can keep the tie "
+        "scoring, enter the result of an tie-break, or abort the save."
+    )
+
+    choice = st.radio(
+        "Tie handling",
+        [
+            "Use tie scoring",
+            "Resolve tied teams after tie-break",
+            "Abort save and return to game",
+        ],
+    )
+
+    if choice == "Use tie scoring":
+        st.info("The tied teams will receive the same evening points.")
+        if st.button("Save with ties", type="primary"):
+            _commit_game_result(state, game)
+        return
+
+    if choice == "Abort save and return to game":
+        st.warning("No game result will be saved.")
+        if st.button("Abort save", type="primary"):
+            st.rerun()
+        return
+
+    tie_break_places: dict[int, dict[str, int]] = {}
+    has_duplicate_places = False
+
+    for rank, team_ids in tied_groups:
+        ordered_team_ids = sorted(
+            team_ids,
+            key=lambda team_id: team_names.get(team_id, "").lower(),
+        )
+        st.markdown(f"**Tie for rank #{rank}**")
+        st.caption(
+            "Assign each tied team a unique tie-break place. Place 1 is the "
+            "best team within this tied group."
+        )
+
+        places_by_team = {}
+
+        for index, team_id in enumerate(ordered_team_ids):
+            places_by_team[team_id] = st.selectbox(
+                team_names.get(team_id, team_id),
+                list(range(1, len(ordered_team_ids) + 1)),
+                index=index,
+                key=f"tie_break_{game.id}_{rank}_{team_id}",
+                format_func=lambda place: f"{place}. within tied group",
+            )
+
+        if len(set(places_by_team.values())) != len(places_by_team):
+            has_duplicate_places = True
+            st.warning("Each tied team needs a unique tie-break place.")
+
+        tie_break_places[rank] = places_by_team
+
+    if has_duplicate_places:
+        disabled = True
+        resolved_game = game
+    else:
+        disabled = False
+
+        try:
+            resolved_ranking = resolve_tied_ranking(
+                game.ranking,
+                tie_break_places,
+            )
+        except ValueError as error:
+            st.error(str(error))
+            disabled = True
+            resolved_game = game
+        else:
+            resolved_game = replace(
+                game,
+                ranking=resolved_ranking,
+                awarded_points=award_points(
+                    resolved_ranking,
+                    len(state.teams),
+                ),
+                details={
+                    **game.details,
+                    "tie_break": {
+                        "original_ranking": game.ranking,
+                        "resolved_ranking": resolved_ranking,
+                    },
+                },
+            )
+
+    if st.button(
+        "Save resolved order",
+        type="primary",
+        disabled=disabled,
+    ):
+        _commit_game_result(state, resolved_game)
+
+
 def _save_simple_game(
     state: AppState,
     game_name: str,
@@ -795,10 +919,7 @@ def _save_simple_game(
         game_points=game_points,
         awarded_points=points,
     )
-    next_state = replace(state, games=[*state.games, game])
-    _persist(next_state)
-    st.success("Game result saved.")
-    st.rerun()
+    _save_game_result(state, game)
 
 
 def _save_multi_round_game(
@@ -862,10 +983,7 @@ def _save_multi_round_game(
         rounds=rounds,
         awarded_points=points,
     )
-    next_state = replace(state, games=[*state.games, game])
-    _persist(next_state)
-    st.success("Game result saved.")
-    st.rerun()
+    _save_game_result(state, game)
 
 
 def _save_cutting_game(
@@ -900,10 +1018,7 @@ def _save_cutting_game(
         details={"cutting_rounds": _serialize_cutting_rounds(cutting_rounds)},
         awarded_points=points,
     )
-    next_state = replace(state, games=[*state.games, game])
-    _persist(next_state)
-    st.success("Game result saved.")
-    st.rerun()
+    _save_game_result(state, game)
 
 
 def _validate_cutting_rounds(
@@ -962,6 +1077,13 @@ def _history_point_direction(game: GameResult) -> str:
 def _ensure_state() -> None:
     if "app_state" not in st.session_state:
         st.session_state.app_state = load_state()
+
+
+def _apply_pending_navigation() -> None:
+    target_view = st.session_state.pop("_target_view", None)
+
+    if target_view in PAGES:
+        st.session_state.selected_view = target_view
 
 
 def _persist(state: AppState) -> None:
