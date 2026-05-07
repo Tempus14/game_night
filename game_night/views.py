@@ -169,24 +169,25 @@ def render_add_simple_game_result(state: AppState) -> None:
             horizontal=True,
             key="simple_input_mode",
         )
+        point_direction = "score"
+
+        if input_mode == "Point Mode":
+            point_direction = _point_direction_input(
+                "simple_point_direction"
+            )
+            st.caption(_point_mode_caption(point_direction))
+        else:
+            st.caption(
+                "Ties are allowed with skipped places, for example "
+                "1, 2, 2, 4."
+            )
 
         with st.form("direct_ranking_game"):
             game_name = st.text_input("Game name")
-            point_direction = "score"
 
             if input_mode == "Rank Mode":
-                st.caption(
-                    "Ties are allowed with skipped places, for example "
-                    "1, 2, 2, 4."
-                )
                 inputs = _ranking_inputs(state, "simple_rank")
             else:
-                point_direction = _point_direction_input(
-                    "simple_point_direction"
-                )
-                st.caption(
-                    _point_mode_caption(point_direction)
-                )
                 inputs = _point_inputs(state, "simple_points")
 
             submitted = st.form_submit_button("Save result")
