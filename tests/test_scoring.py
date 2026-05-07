@@ -72,6 +72,14 @@ def test_ranking_from_scores_uses_competition_ranking() -> None:
     assert ranking == {"b": 1, "c": 1, "a": 3, "d": 4}
 
 
+def test_ranking_from_penalty_scores_uses_lower_scores_as_better() -> None:
+    scores = {"a": 5, "b": 2, "c": 2, "d": 9}
+
+    ranking = ranking_from_scores(scores, higher_is_better=False)
+
+    assert ranking == {"b": 1, "c": 1, "a": 3, "d": 4}
+
+
 def test_sum_round_scores_totals_each_team() -> None:
     rounds = [
         {"a": 2, "b": 4, "c": 0},

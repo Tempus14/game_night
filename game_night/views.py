@@ -32,8 +32,8 @@ def run_app() -> None:
         [
             "Scoreboard",
             "Teams",
-            "Add Simple Game Result",
-            "Add Multi-Round Game Result",
+            "Add Simple Game",
+            "Add Multi-Round Game",
             "Game History",
         ],
     )
@@ -42,9 +42,9 @@ def run_app() -> None:
         render_scoreboard(st.session_state.app_state)
     elif page == "Teams":
         render_teams(st.session_state.app_state)
-    elif page == "Add Simple Game Result":
+    elif page == "Add Simple Game":
         render_add_simple_game_result(st.session_state.app_state)
-    elif page == "Add Multi-Round Game Result":
+    elif page == "Add Multi-Round Game":
         render_add_multi_round_game_result(st.session_state.app_state)
     else:
         render_game_history(st.session_state.app_state)
@@ -148,7 +148,7 @@ def render_teams(state: AppState) -> None:
 
 
 def render_add_simple_game_result(state: AppState) -> None:
-    st.title("Add Simple Game Result")
+    st.title("Add Simple Game")
 
     if len(state.teams) < 2:
         st.info("Add at least two teams before saving game results.")
@@ -166,6 +166,7 @@ def render_add_simple_game_result(state: AppState) -> None:
 
         with st.form("direct_ranking_game"):
             game_name = st.text_input("Game name")
+            point_direction = "score"
 
             if input_mode == "Rank Mode":
                 st.caption(
@@ -174,22 +175,31 @@ def render_add_simple_game_result(state: AppState) -> None:
                 )
                 inputs = _ranking_inputs(state, "simple_rank")
             else:
+                point_direction = _point_direction_input(
+                    "simple_point_direction"
+                )
                 st.caption(
-                    "Higher game points rank higher. Ties produce tied ranks."
+                    _point_mode_caption(point_direction)
                 )
                 inputs = _point_inputs(state, "simple_points")
 
             submitted = st.form_submit_button("Save result")
 
         if submitted:
-            _save_simple_game(state, game_name, input_mode, inputs)
+            _save_simple_game(
+                state,
+                game_name,
+                input_mode,
+                inputs,
+                point_direction,
+            )
 
     with scoreboard_column:
         render_compact_scoreboard(state)
 
 
 def render_add_multi_round_game_result(state: AppState) -> None:
-    st.title("Add Multi-Round Game Result")
+    st.title("Add Multi-Round Game")
 
     if len(state.teams) < 2:
         st.info("Add at least two teams before saving game results.")
@@ -216,16 +226,21 @@ def render_add_multi_round_game_result(state: AppState) -> None:
             game_name = st.text_input("Game name")
 
             if input_mode == "Point Mode":
+                point_direction = _point_direction_input(
+                    "multi_round_point_direction"
+                )
                 st.caption(
-                    "Enter each team's points per round. Round totals are "
-                    "summed before the game ranking is calculated."
+                    _point_mode_caption(point_direction)
                 )
                 rounds = _round_point_inputs(
                     state,
                     "multi_round_points",
                     int(round_count),
                 )
-                inputs = {"rounds": rounds}
+                inputs = {
+                    "rounds": rounds,
+                    "point_direction": point_direction,
+                }
             else:
                 st.caption(
                     "Use this if the final game ranking is already known. "
@@ -313,6 +328,29 @@ def _point_inputs(state: AppState, key_prefix: str) -> dict[str, int]:
     return points
 
 
+def _point_direction_input(key: str) -> str:
+    mode = st.radio(
+        "Point scoring",
+        ["Score Points", "Penalty Points"],
+        horizontal=True,
+        key=key,
+    )
+
+    if mode == "Penalty Points":
+        return "penalty"
+
+    return "score"
+
+
+def _point_mode_caption(point_direction: str) -> str:
+    if point_direction == "penalty":
+        return (
+            "Lower penalty points rank higher. Ties produce tied ranks."
+        )
+
+    return "Higher score points rank higher. Ties produce tied ranks."
+
+
 def _round_point_inputs(
     state: AppState,
     key_prefix: str,
@@ -343,7 +381,7 @@ def render_game_history(state: AppState) -> None:
         with st.expander(game.name, expanded=False):
             st.caption(
                 f"Mode: {game.mode.replace('_', ' ')} / "
-                f"{game.input_mode} input"
+                f"{game.input_mode} input{_history_point_direction(game)}"
             )
             rows = sorted(
                 game.ranking.items(),
@@ -481,6 +519,7 @@ def _save_simple_game(
     game_name: str,
     input_mode: str,
     inputs: dict[str, int],
+    point_direction: str = "score",
 ) -> None:
     normalized_name = game_name.strip()
 
@@ -502,7 +541,10 @@ def _save_simple_game(
         game_points = {}
         stored_input_mode = "rank"
     else:
-        ranking = ranking_from_scores(inputs)
+        ranking = ranking_from_scores(
+            inputs,
+            higher_is_better=point_direction == "score",
+        )
         game_points = inputs
         stored_input_mode = "points"
 
@@ -511,6 +553,7 @@ def _save_simple_game(
         name=normalized_name,
         mode="simple",
         input_mode=stored_input_mode,
+        point_direction=point_direction,
         ranking=ranking,
         game_points=game_points,
         awarded_points=points,
@@ -550,15 +593,25 @@ def _save_multi_round_game(
         rounds = []
         game_points = {}
         stored_input_mode = "rank"
+        point_direction = "score"
     else:
         rounds = inputs["rounds"]
+        raw_point_direction = inputs.get("point_direction", "score")
 
         if not isinstance(rounds, list):
             st.error("Invalid round input.")
             return
 
+        if not isinstance(raw_point_direction, str):
+            st.error("Invalid point scoring input.")
+            return
+
+        point_direction = raw_point_direction
         game_points = sum_round_scores(rounds, team_ids)
-        ranking = ranking_from_scores(game_points)
+        ranking = ranking_from_scores(
+            game_points,
+            higher_is_better=point_direction == "score",
+        )
         stored_input_mode = "points"
 
     points = award_points(ranking, len(state.teams))
@@ -566,6 +619,7 @@ def _save_multi_round_game(
         name=normalized_name,
         mode="multi_round",
         input_mode=stored_input_mode,
+        point_direction=point_direction,
         ranking=ranking,
         game_points=game_points,
         rounds=rounds,
@@ -575,6 +629,16 @@ def _save_multi_round_game(
     _persist(next_state)
     st.success("Game result saved.")
     st.rerun()
+
+
+def _history_point_direction(game: GameResult) -> str:
+    if game.input_mode != "points":
+        return ""
+
+    if game.point_direction == "penalty":
+        return " / penalty points"
+
+    return " / score points"
 
 
 def _ensure_state() -> None:

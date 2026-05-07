@@ -39,6 +39,7 @@ class GameResult:
     ranking: dict[str, int]
     awarded_points: dict[str, int]
     input_mode: str = "point"
+    point_direction: str = "score"
     game_points: dict[str, int] = field(default_factory=dict)
     rounds: list[dict[str, int]] = field(default_factory=list)
 
@@ -50,6 +51,7 @@ class GameResult:
         ranking: dict[str, int],
         awarded_points: dict[str, int],
         input_mode: str = "point",
+        point_direction: str = "score",
         game_points: dict[str, int] | None = None,
         rounds: list[dict[str, int]] | None = None,
     ) -> "GameResult":
@@ -60,6 +62,7 @@ class GameResult:
             ranking=ranking,
             awarded_points=awarded_points,
             input_mode=input_mode,
+            point_direction=point_direction,
             game_points=game_points or {},
             rounds=rounds or [],
         )
@@ -77,6 +80,7 @@ class GameResult:
             ranking=ranking,
             awarded_points=awarded_points,
             input_mode="rank",
+            point_direction="score",
         )
 
     @classmethod
@@ -94,6 +98,7 @@ class GameResult:
                 for team_id, points in data.get("awarded_points", {}).items()
             },
             input_mode=str(data.get("input_mode", "rank")),
+            point_direction=str(data.get("point_direction", "score")),
             game_points={
                 str(team_id): int(points)
                 for team_id, points in data.get("game_points", {}).items()
@@ -113,6 +118,7 @@ class GameResult:
             "name": self.name,
             "mode": self.mode,
             "input_mode": self.input_mode,
+            "point_direction": self.point_direction,
             "ranking": self.ranking,
             "game_points": self.game_points,
             "rounds": self.rounds,
