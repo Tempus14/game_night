@@ -214,12 +214,21 @@ def render_add_multi_round_game_result(state: AppState) -> None:
     form_column, scoreboard_column = st.columns([0.62, 0.38], gap="large")
 
     with form_column:
+        game_name = st.text_input("Game name", key="multi_round_game_name")
         input_mode = st.radio(
             "Input mode",
             ["Point Mode", "Rank Mode"],
             horizontal=True,
             key="round_input_mode",
         )
+        point_direction = "score"
+
+        if input_mode == "Point Mode":
+            point_direction = _point_direction_input(
+                "multi_round_point_direction"
+            )
+            st.caption(_point_mode_caption(point_direction))
+
         round_count = st.number_input(
             "Rounds",
             min_value=1,
@@ -234,32 +243,25 @@ def render_add_multi_round_game_result(state: AppState) -> None:
             format_func=lambda number: f"Round {number}",
             key="multi_round_active_round",
         )
+        st.markdown("**Round inputs**")
 
-        with st.form("multi_round_game"):
-            game_name = st.text_input("Game name")
-
-            if input_mode == "Point Mode":
-                point_direction = _point_direction_input(
-                    "multi_round_point_direction"
-                )
-                st.caption(
-                    _point_mode_caption(point_direction)
-                )
-                rounds = _round_point_inputs(
-                    state,
-                    "multi_round_points",
-                    int(round_count),
-                    int(active_round),
-                )
-                inputs = {
-                    "rounds": rounds,
-                    "point_direction": point_direction,
-                }
-            else:
-                st.caption(
-                    "Use this if the final game ranking is already known. "
-                    "Ties are allowed with skipped places."
-                )
+        if input_mode == "Point Mode":
+            rounds = _round_point_inputs(
+                state,
+                "multi_round_points",
+                int(round_count),
+                int(active_round),
+            )
+            inputs = {
+                "rounds": rounds,
+                "point_direction": point_direction,
+            }
+        else:
+            st.caption(
+                "Use this if the final game ranking is already known. "
+                "Ties are allowed with skipped places."
+            )
+            with st.container(border=True):
                 inputs = {
                     "ranking": _ranking_inputs(
                         state,
@@ -267,9 +269,7 @@ def render_add_multi_round_game_result(state: AppState) -> None:
                     )
                 }
 
-            submitted = st.form_submit_button("End Game and Save Result")
-
-        if submitted:
+        if st.button("End Game and Save Result", type="primary"):
             _save_multi_round_game(state, game_name, input_mode, inputs)
 
     with scoreboard_column:
@@ -303,6 +303,7 @@ def render_add_cutting_game_result(state: AppState) -> None:
             horizontal=True,
             format_func=lambda number: f"Round {number}",
         )
+        st.markdown("**Round inputs**")
         cutting_rounds = _cutting_round_inputs(
             state,
             int(round_count),
@@ -362,15 +363,17 @@ def _cutting_round_inputs(
                 part_a = columns[0].number_input(
                     "Part A weight",
                     min_value=0.0,
-                    value=0.0,
-                    step=1.0,
+                    value=1.0,
+                    step=0.1,
+                    format="%g",
                     key=f"cutting_{index}_{team.id}_a",
                 )
                 part_b = columns[1].number_input(
                     "Part B weight",
                     min_value=0.0,
-                    value=0.0,
-                    step=1.0,
+                    value=1.0,
+                    step=0.1,
+                    format="%g",
                     key=f"cutting_{index}_{team.id}_b",
                 )
                 weights[team.id] = (float(part_a), float(part_b))
