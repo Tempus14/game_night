@@ -10,6 +10,9 @@ from game_night.models import AppState, GameResult, Team
 from game_night.scoring import (
     award_points,
     build_scoreboard,
+    cutting_penalty,
+    cutting_round_penalties,
+    cutting_round_winner_points,
     ranking_from_scores,
     sum_round_scores,
     team_name_by_id,
@@ -34,6 +37,7 @@ def run_app() -> None:
             "Teams",
             "Add Simple Game",
             "Add Multi-Round Game",
+            "Add Cutting Game",
             "Game History",
         ],
     )
@@ -46,6 +50,8 @@ def run_app() -> None:
         render_add_simple_game_result(st.session_state.app_state)
     elif page == "Add Multi-Round Game":
         render_add_multi_round_game_result(st.session_state.app_state)
+    elif page == "Add Cutting Game":
+        render_add_cutting_game_result(st.session_state.app_state)
     else:
         render_game_history(st.session_state.app_state)
 
@@ -221,6 +227,13 @@ def render_add_multi_round_game_result(state: AppState) -> None:
             value=3,
             step=1,
         )
+        active_round = st.radio(
+            "Current round",
+            list(range(1, int(round_count) + 1)),
+            horizontal=True,
+            format_func=lambda number: f"Round {number}",
+            key="multi_round_active_round",
+        )
 
         with st.form("multi_round_game"):
             game_name = st.text_input("Game name")
@@ -236,6 +249,7 @@ def render_add_multi_round_game_result(state: AppState) -> None:
                     state,
                     "multi_round_points",
                     int(round_count),
+                    int(active_round),
                 )
                 inputs = {
                     "rounds": rounds,
@@ -253,13 +267,230 @@ def render_add_multi_round_game_result(state: AppState) -> None:
                     )
                 }
 
-            submitted = st.form_submit_button("Save result")
+            submitted = st.form_submit_button("End Game and Save Result")
 
         if submitted:
             _save_multi_round_game(state, game_name, input_mode, inputs)
 
     with scoreboard_column:
         render_compact_scoreboard(state)
+
+
+def render_add_cutting_game_result(state: AppState) -> None:
+    st.title("Add Cutting Game")
+
+    if len(state.teams) < 2:
+        st.info("Add at least two teams before saving game results.")
+        return
+
+    input_column, visual_column = st.columns(
+        [0.36, 0.64],
+        gap="large",
+    )
+
+    with input_column:
+        game_name = st.text_input("Game name", value="Cutting Challenge")
+        round_count = st.number_input(
+            "Objects / rounds",
+            min_value=1,
+            max_value=20,
+            value=3,
+            step=1,
+        )
+        active_round = st.radio(
+            "Current round",
+            list(range(1, int(round_count) + 1)),
+            horizontal=True,
+            format_func=lambda number: f"Round {number}",
+        )
+        cutting_rounds = _cutting_round_inputs(
+            state,
+            int(round_count),
+            int(active_round),
+        )
+        round_points = _cutting_round_points(cutting_rounds, len(state.teams))
+        game_points = sum_round_scores(
+            round_points,
+            [team.id for team in state.teams],
+        )
+        ranking = ranking_from_scores(game_points)
+
+        if st.button("End Game and Save Result", type="primary"):
+            _save_cutting_game(
+                state,
+                game_name,
+                cutting_rounds,
+                round_points,
+                game_points,
+                ranking,
+            )
+
+    with visual_column:
+        st.subheader("Live Cutting Performance")
+        render_cutting_round_visual(
+            state,
+            cutting_rounds[int(active_round) - 1],
+            round_points[int(active_round) - 1],
+            int(active_round),
+        )
+
+        with st.expander("Game totals", expanded=False):
+            render_cutting_game_totals(state, game_points, ranking)
+
+
+def _cutting_round_inputs(
+    state: AppState,
+    round_count: int,
+    active_round: int,
+) -> list[dict[str, object]]:
+    rounds = []
+
+    for index in range(1, round_count + 1):
+        expanded = index == active_round
+
+        with st.expander(f"Round {index}", expanded=expanded):
+            object_name = st.text_input(
+                "Object",
+                value=f"Object {index}",
+                key=f"cutting_object_{index}",
+            )
+            weights = {}
+
+            for team in state.teams:
+                st.markdown(f"**{team.name}**")
+                columns = st.columns(2)
+                part_a = columns[0].number_input(
+                    "Part A weight",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1.0,
+                    key=f"cutting_{index}_{team.id}_a",
+                )
+                part_b = columns[1].number_input(
+                    "Part B weight",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1.0,
+                    key=f"cutting_{index}_{team.id}_b",
+                )
+                weights[team.id] = (float(part_a), float(part_b))
+
+            rounds.append({"object": object_name.strip(), "weights": weights})
+
+    return rounds
+
+
+def _cutting_round_points(
+    cutting_rounds: list[dict[str, object]],
+    team_count: int,
+) -> list[dict[str, int]]:
+    round_points = []
+
+    for round_data in cutting_rounds:
+        weights = round_data["weights"]
+
+        if not isinstance(weights, dict):
+            round_points.append({})
+            continue
+
+        round_points.append(cutting_round_winner_points(weights, team_count))
+
+    return round_points
+
+
+def render_cutting_round_visual(
+    state: AppState,
+    round_data: dict[str, object],
+    round_points: dict[str, int],
+    round_number: int,
+) -> None:
+    team_names = team_name_by_id(state.teams)
+    weights = round_data["weights"]
+    object_name = str(round_data.get("object") or f"Object {round_number}")
+
+    if not isinstance(weights, dict):
+        return
+
+    st.markdown(f"#### Round {round_number}: {object_name}")
+    penalties = cutting_round_penalties(weights)
+    ranking = ranking_from_scores(penalties, higher_is_better=False)
+    sorted_team_ids = sorted(
+        weights,
+        key=lambda team_id: (ranking[team_id], team_names.get(team_id, "")),
+    )
+
+    for team_id in sorted_team_ids:
+        part_a, part_b = weights[team_id]
+        team = next(team for team in state.teams if team.id == team_id)
+        points = round_points.get(team_id, 0)
+        render_cutting_team_row(
+            team_name=team.name,
+            team_color=team.color,
+            part_a=part_a,
+            part_b=part_b,
+            penalty=penalties[team_id],
+            rank=ranking[team_id],
+            round_points=points,
+        )
+
+
+def render_cutting_game_totals(
+    state: AppState,
+    game_points: dict[str, int],
+    ranking: dict[str, int],
+) -> None:
+    sorted_teams = sorted(
+        state.teams,
+        key=lambda team: (ranking[team.id], team.name.lower()),
+    )
+
+    for team in sorted_teams:
+        st.write(
+            f"#{ranking[team.id]} - {team.name} - "
+            f"{game_points[team.id]} round-winner points"
+        )
+
+
+def render_cutting_team_row(
+    *,
+    team_name: str,
+    team_color: str,
+    part_a: float,
+    part_b: float,
+    penalty: float,
+    rank: int,
+    round_points: int,
+) -> None:
+    total = part_a + part_b
+    part_a_percent = 50.0 if total <= 0 else (part_a / total) * 100
+    part_b_percent = 100 - part_a_percent
+    team_color = _safe_hex_color(team_color)
+    safe_name = escape(team_name)
+
+    st.markdown(
+        f"""
+        <div class="cutting-row" style="--team-color: {team_color};">
+            <div class="cutting-team">
+                <span class="compact-color-dot"></span>
+                <span>{safe_name}</span>
+            </div>
+            <div class="cutting-bar" aria-label="Cut balance">
+                <div class="cutting-part cutting-part-a"
+                    style="width: {part_a_percent:.2f}%;">
+                    {part_a:.1f}
+                </div>
+                <div class="cutting-part cutting-part-b"
+                    style="width: {part_b_percent:.2f}%;">
+                    {part_b:.1f}
+                </div>
+            </div>
+            <div class="cutting-stats">
+                #{rank} &middot; {round_points} pts &middot; {penalty:.1%}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_compact_scoreboard(state: AppState) -> None:
@@ -355,12 +586,14 @@ def _round_point_inputs(
     state: AppState,
     key_prefix: str,
     round_count: int,
+    active_round: int,
 ) -> list[dict[str, int]]:
     rounds = []
-    tabs = st.tabs([f"Round {number}" for number in range(1, round_count + 1)])
 
-    for index, tab in enumerate(tabs, start=1):
-        with tab:
+    for index in range(1, round_count + 1):
+        expanded = index == active_round
+
+        with st.expander(f"Round {index}", expanded=expanded):
             rounds.append(
                 _point_inputs(state, f"{key_prefix}_{index}")
             )
@@ -393,7 +626,7 @@ def render_game_history(state: AppState) -> None:
                 game_points = game.game_points.get(team_id)
                 detail = ""
                 if game_points is not None:
-                    detail = f" - game points: {game_points}"
+                    detail = f" - game points: {game_points:g}"
 
                 st.write(
                     f"#{rank} - {names.get(team_id, team_id)} - "
@@ -631,6 +864,87 @@ def _save_multi_round_game(
     st.rerun()
 
 
+def _save_cutting_game(
+    state: AppState,
+    game_name: str,
+    cutting_rounds: list[dict[str, object]],
+    round_points: list[dict[str, int]],
+    game_points: dict[str, int],
+    ranking: dict[str, int],
+) -> None:
+    normalized_name = game_name.strip()
+
+    if not normalized_name:
+        st.error("Game name cannot be empty.")
+        return
+
+    validation = _validate_cutting_rounds(cutting_rounds)
+
+    if validation:
+        st.error(validation)
+        return
+
+    points = award_points(ranking, len(state.teams))
+    game = GameResult.create(
+        name=normalized_name,
+        mode="cutting",
+        input_mode="points",
+        point_direction="score",
+        ranking=ranking,
+        game_points=game_points,
+        rounds=round_points,
+        details={"cutting_rounds": _serialize_cutting_rounds(cutting_rounds)},
+        awarded_points=points,
+    )
+    next_state = replace(state, games=[*state.games, game])
+    _persist(next_state)
+    st.success("Game result saved.")
+    st.rerun()
+
+
+def _validate_cutting_rounds(
+    cutting_rounds: list[dict[str, object]],
+) -> str | None:
+    for index, round_data in enumerate(cutting_rounds, start=1):
+        weights = round_data["weights"]
+
+        if not isinstance(weights, dict):
+            return f"Round {index} has invalid weight data."
+
+        for part_a, part_b in weights.values():
+            if part_a <= 0 or part_b <= 0:
+                return (
+                    f"Round {index} needs both part weights for every team "
+                    "before saving."
+                )
+
+    return None
+
+
+def _serialize_cutting_rounds(
+    cutting_rounds: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    serialized_rounds = []
+
+    for round_data in cutting_rounds:
+        weights = round_data["weights"]
+
+        if not isinstance(weights, dict):
+            weights = {}
+
+        serialized_rounds.append(
+            {
+                "object": str(round_data.get("object", "")),
+                "weights": {
+                    team_id: {"part_a": part_a, "part_b": part_b}
+                    for team_id, (part_a, part_b) in weights.items()
+                },
+            }
+        )
+
+    return serialized_rounds
+
+
 def _history_point_direction(game: GameResult) -> str:
     if game.input_mode != "points":
         return ""
@@ -858,6 +1172,70 @@ def _apply_styles() -> None:
                 width: 0.7rem;
             }
 
+            .cutting-row {
+                background: var(--secondary-background-color);
+                border:
+                    1px solid var(--border-color, rgba(148, 163, 184, 0.35));
+                border-left: 0.35rem solid var(--team-color);
+                border-radius: var(--base-radius, 0.5rem);
+                color: var(--text-color);
+                display: grid;
+                grid-template-columns: minmax(8rem, 0.8fr) 2fr 8rem;
+                gap: 0.75rem;
+                align-items: center;
+                margin-bottom: 0.55rem;
+                padding: 0.65rem 0.75rem;
+            }
+
+            .cutting-team {
+                align-items: center;
+                display: flex;
+                font-weight: 700;
+                gap: 0.5rem;
+                min-width: 0;
+            }
+
+            .cutting-team span:last-child {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .cutting-bar {
+                background: var(--gray-background-color, rgba(100, 116, 139, 0.16));
+                border-radius: var(--base-radius, 0.5rem);
+                display: flex;
+                min-height: 2.25rem;
+                overflow: hidden;
+            }
+
+            .cutting-part {
+                align-items: center;
+                display: flex;
+                font-size: 0.85rem;
+                font-weight: 800;
+                justify-content: center;
+                min-width: 2.2rem;
+                transition: width 160ms ease;
+            }
+
+            .cutting-part-a {
+                background: var(--blue-background-color, rgba(37, 99, 235, 0.20));
+                color: var(--blue-text-color, var(--text-color));
+            }
+
+            .cutting-part-b {
+                background: var(--orange-background-color, rgba(234, 88, 12, 0.20));
+                color: var(--orange-text-color, var(--text-color));
+            }
+
+            .cutting-stats {
+                font-size: 0.9rem;
+                font-weight: 800;
+                text-align: right;
+                white-space: nowrap;
+            }
+
             @media (max-width: 760px) {
                 .score-row {
                     grid-template-columns: 4rem 1fr 5rem;
@@ -865,6 +1243,14 @@ def _apply_styles() -> None:
 
                 .meta {
                     grid-column: 2 / 4;
+                    text-align: left;
+                }
+
+                .cutting-row {
+                    grid-template-columns: 1fr;
+                }
+
+                .cutting-stats {
                     text-align: left;
                 }
             }

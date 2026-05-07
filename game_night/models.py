@@ -42,6 +42,7 @@ class GameResult:
     point_direction: str = "score"
     game_points: dict[str, int] = field(default_factory=dict)
     rounds: list[dict[str, int]] = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def create(
@@ -54,6 +55,7 @@ class GameResult:
         point_direction: str = "score",
         game_points: dict[str, int] | None = None,
         rounds: list[dict[str, int]] | None = None,
+        details: dict[str, Any] | None = None,
     ) -> "GameResult":
         return cls(
             id=new_id("game"),
@@ -65,6 +67,7 @@ class GameResult:
             point_direction=point_direction,
             game_points=game_points or {},
             rounds=rounds or [],
+            details=details or {},
         )
 
     @classmethod
@@ -110,6 +113,7 @@ class GameResult:
                 }
                 for round_scores in data.get("rounds", [])
             ],
+            details=dict(data.get("details", {})),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -122,6 +126,7 @@ class GameResult:
             "ranking": self.ranking,
             "game_points": self.game_points,
             "rounds": self.rounds,
+            "details": self.details,
             "awarded_points": self.awarded_points,
         }
 

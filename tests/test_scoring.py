@@ -1,7 +1,11 @@
+import pytest
+
 from game_night.models import AppState, GameResult, Team
 from game_night.scoring import (
     award_points,
     build_scoreboard,
+    cutting_penalty,
+    cutting_round_winner_points,
     ranking_from_scores,
     sum_round_scores,
     validate_competition_ranking,
@@ -89,6 +93,26 @@ def test_sum_round_scores_totals_each_team() -> None:
     totals = sum_round_scores(rounds, ["a", "b", "c"])
 
     assert totals == {"a": 7, "b": 5, "c": 3}
+
+
+def test_cutting_penalty_is_zero_for_perfect_split() -> None:
+    assert cutting_penalty(50, 50) == 0
+
+
+def test_cutting_penalty_uses_smaller_over_larger_ratio() -> None:
+    assert cutting_penalty(40, 60) == pytest.approx(1 / 3)
+
+
+def test_cutting_round_winner_points_use_lower_penalty_as_better() -> None:
+    weights = {
+        "a": (50, 50),
+        "b": (40, 60),
+        "c": (30, 70),
+    }
+
+    points = cutting_round_winner_points(weights, 3)
+
+    assert points == {"a": 2, "b": 1, "c": 0}
 
 
 def test_build_scoreboard_uses_competition_ranking_for_total_ties() -> None:

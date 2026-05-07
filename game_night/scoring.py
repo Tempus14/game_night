@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from game_night.models import AppState, Team
 
 
+Number = int | float
+
+
 @dataclass(frozen=True)
 class RankingValidation:
     is_valid: bool
@@ -75,7 +78,7 @@ def award_points(
 
 
 def ranking_from_scores(
-    scores_by_team: dict[str, int],
+    scores_by_team: dict[str, Number],
     *,
     higher_is_better: bool = True,
 ) -> dict[str, int]:
@@ -109,6 +112,34 @@ def sum_round_scores(
             totals[team_id] += round_scores.get(team_id, 0)
 
     return totals
+
+
+def cutting_penalty(part_a_weight: float, part_b_weight: float) -> float:
+    larger = max(part_a_weight, part_b_weight)
+    smaller = min(part_a_weight, part_b_weight)
+
+    if larger <= 0:
+        return 0.0
+
+    return 1 - (smaller / larger)
+
+
+def cutting_round_penalties(
+    round_weights: dict[str, tuple[float, float]],
+) -> dict[str, float]:
+    return {
+        team_id: cutting_penalty(part_a, part_b)
+        for team_id, (part_a, part_b) in round_weights.items()
+    }
+
+
+def cutting_round_winner_points(
+    round_weights: dict[str, tuple[float, float]],
+    team_count: int,
+) -> dict[str, int]:
+    penalties = cutting_round_penalties(round_weights)
+    ranking = ranking_from_scores(penalties, higher_is_better=False)
+    return award_points(ranking, team_count)
 
 
 def build_scoreboard(state: AppState) -> list[ScoreboardRow]:
