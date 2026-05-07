@@ -35,5 +35,5 @@ Use `game_night/theme.py` only for default team colors. The rest is managed in t
 - Allow competition-ranking ties, such as `1, 2, 2, 4`.
 - Award game-night points using `num_teams - rank`.
 - Keep automatic JSON saves and backups.
-- Support mulit-round games.
+- Support multi-round games.
 - Support rank, score point and penalty point input.
