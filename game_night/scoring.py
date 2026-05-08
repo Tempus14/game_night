@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from game_night.i18n import DEFAULT_LOCALE, t
 from game_night.models import AppState, Team
 
 
@@ -12,7 +13,25 @@ Number = int | float
 @dataclass(frozen=True)
 class RankingValidation:
     is_valid: bool
-    message: str
+    message_key: str
+    message_params: dict[str, object] = field(default_factory=dict)
+
+    @property
+    def message(self) -> str:
+        return t(DEFAULT_LOCALE, self.message_key, **self.message_params)
+
+
+class TieBreakValidationError(ValueError):
+    def __init__(
+        self,
+        message_key: str,
+        message_params: dict[str, object] | None = None,
+    ) -> None:
+        self.message_key = message_key
+        self.message_params = message_params or {}
+        super().__init__(
+            t(DEFAULT_LOCALE, self.message_key, **self.message_params)
+        )
 
 
 @dataclass(frozen=True)
@@ -31,7 +50,7 @@ def validate_competition_ranking(
     team_ids: list[str],
 ) -> RankingValidation:
     if not team_ids:
-        return RankingValidation(False, "Add at least one team first.")
+        return RankingValidation(False, "validation.add_team_first")
 
     expected_team_ids = set(team_ids)
     submitted_team_ids = set(ranks_by_team)
@@ -40,10 +59,10 @@ def validate_competition_ranking(
     extra = submitted_team_ids - expected_team_ids
 
     if missing:
-        return RankingValidation(False, "Every team needs a rank.")
+        return RankingValidation(False, "validation.missing_rank")
 
     if extra:
-        return RankingValidation(False, "Ranking contains unknown teams.")
+        return RankingValidation(False, "validation.unknown_teams")
 
     ranks = list(ranks_by_team.values())
     team_count = len(team_ids)
@@ -51,7 +70,8 @@ def validate_competition_ranking(
     if any(rank < 1 or rank > team_count for rank in ranks):
         return RankingValidation(
             False,
-            f"Ranks must be between 1 and {team_count}.",
+            "validation.rank_range",
+            {"team_count": team_count},
         )
 
     submitted = sorted(ranks)
@@ -60,11 +80,10 @@ def validate_competition_ranking(
     if submitted != expected:
         return RankingValidation(
             False,
-            "Invalid tie pattern. Use competition ranking such as "
-            "1, 2, 2, 4.",
+            "validation.tie_pattern",
         )
 
-    return RankingValidation(True, "Ranking is valid.")
+    return RankingValidation(True, "validation.ranking_valid")
 
 
 def award_points(
@@ -107,13 +126,13 @@ def resolve_tied_ranking(
         submitted_team_ids = set(places_by_team)
 
         if submitted_team_ids != tied_team_ids:
-            raise ValueError("Tie-break places must cover the tied teams.")
+            raise TieBreakValidationError("validation.tie_break_missing")
 
         places = sorted(places_by_team.values())
         expected_places = list(range(1, len(tied_team_ids) + 1))
 
         if places != expected_places:
-            raise ValueError("Tie-break places must be unique and consecutive.")
+            raise TieBreakValidationError("validation.tie_break_unique")
 
         for team_id, place in places_by_team.items():
             resolved[team_id] = rank + place - 1

@@ -37,3 +37,4 @@ Use `game_night/theme.py` only for default team colors. The rest is managed in t
 - Keep automatic JSON saves and backups.
 - Support multi-round games.
 - Support rank, score point and penalty point input.
+- Switch the user interface between English and German.

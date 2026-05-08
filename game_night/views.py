@@ -6,8 +6,10 @@ from html import escape
 
 import streamlit as st
 
+from game_night.i18n import DEFAULT_LOCALE, LOCALES, normalize_locale, t
 from game_night.models import AppState, GameResult, Team
 from game_night.scoring import (
+    TieBreakValidationError,
     award_points,
     build_scoreboard,
     cutting_penalty,
@@ -24,50 +26,73 @@ from game_night.storage import load_state, save_state, write_backup
 from game_night.theme import TEAM_COLORS
 
 
-PAGES = [
-    "Scoreboard",
-    "Teams",
-    "Add Simple Game",
-    "Add Multi-Round Game",
-    "Add Cutting Game",
-    "Game History",
-]
+PAGE_LABEL_KEYS = {
+    "scoreboard": "nav.scoreboard",
+    "teams": "nav.teams",
+    "simple_game": "nav.simple_game",
+    "multi_round_game": "nav.multi_round_game",
+    "cutting_game": "nav.cutting_game",
+    "history": "nav.history",
+}
+PAGES = tuple(PAGE_LABEL_KEYS)
+LEGACY_PAGE_IDS = {
+    "Scoreboard": "scoreboard",
+    "Teams": "teams",
+    "Add Simple Game": "simple_game",
+    "Add Multi-Round Game": "multi_round_game",
+    "Add Cutting Game": "cutting_game",
+    "Game History": "history",
+}
 
 
 def run_app() -> None:
     st.set_page_config(
-        page_title="Game Night Scoreboard",
+        page_title=t(DEFAULT_LOCALE, "app.title"),
         layout="wide",
     )
     _apply_styles()
     _ensure_state()
     _apply_pending_navigation()
+    _normalize_selected_view()
 
     page = st.sidebar.radio(
-        "View",
+        _text("nav.view"),
         PAGES,
         key="selected_view",
+        format_func=lambda page_id: _text(PAGE_LABEL_KEYS[page_id]),
+    )
+    st.sidebar.markdown(
+        '<div class="sidebar-language-anchor"></div>',
+        unsafe_allow_html=True,
+    )
+    st.sidebar.radio(
+        _text("nav.language"),
+        LOCALES,
+        index=LOCALES.index(DEFAULT_LOCALE),
+        key="locale",
+        format_func=str.upper,
+        horizontal=True,
     )
 
-    if page == "Scoreboard":
+    if page == "scoreboard":
         render_scoreboard(st.session_state.app_state)
-    elif page == "Teams":
+    elif page == "teams":
         render_teams(st.session_state.app_state)
-    elif page == "Add Simple Game":
+    elif page == "simple_game":
         render_add_simple_game_result(st.session_state.app_state)
-    elif page == "Add Multi-Round Game":
+    elif page == "multi_round_game":
         render_add_multi_round_game_result(st.session_state.app_state)
-    elif page == "Add Cutting Game":
+    elif page == "cutting_game":
         render_add_cutting_game_result(st.session_state.app_state)
     else:
         render_game_history(st.session_state.app_state)
 
 
 def render_scoreboard(state: AppState) -> None:
-    st.title("Scoreboard")
+    st.title(_text("nav.scoreboard"))
 
     if not state.teams:
-        st.info("Add teams before the first game.")
+        st.info(_text("scoreboard.empty"))
         return
 
     rows = build_scoreboard(state)
@@ -78,9 +103,13 @@ def render_scoreboard(state: AppState) -> None:
         st.markdown(
             f"""
             <section class="leader">
-                <div class="leader-label">Current leader</div>
+                <div class="leader-label">
+                    {_html_text("scoreboard.current_leader")}
+                </div>
                 <div class="leader-name">{leader_name}</div>
-                <div class="leader-points">{leader.total_points} points</div>
+                <div class="leader-points">
+                    {_html_text("scoreboard.leader_points", points=leader.total_points)}
+                </div>
             </section>
             """,
             unsafe_allow_html=True,
@@ -100,7 +129,11 @@ def render_scoreboard(state: AppState) -> None:
                 </div>
                 <div class="points">{row.total_points}</div>
                 <div class="meta">
-                    {row.games_won} wins &middot; {row.games_played} played
+                    {_html_text(
+                        "scoreboard.row_meta",
+                        wins=row.games_won,
+                        played=row.games_played,
+                    )}
                 </div>
             </div>
             """,
@@ -109,35 +142,32 @@ def render_scoreboard(state: AppState) -> None:
 
 
 def render_teams(state: AppState) -> None:
-    st.title("Teams")
+    st.title(_text("nav.teams"))
 
     if state.games:
-        st.warning(
-            "Games have already been saved. Team setup should normally stay "
-            "fixed after the evening starts."
-        )
+        st.warning(_text("teams.saved_warning"))
 
     with st.form("add_team", clear_on_submit=True):
-        name = st.text_input("Team name")
+        name = st.text_input(_text("teams.name"))
         color = st.color_picker(
-            "Team color",
+            _text("teams.color"),
             TEAM_COLORS[len(state.teams) % len(TEAM_COLORS)],
         )
-        submitted = st.form_submit_button("Add team")
+        submitted = st.form_submit_button(_text("teams.add"))
 
     if submitted:
         _add_team(state, name, color)
 
-    st.subheader("Configured teams")
+    st.subheader(_text("teams.configured"))
 
     if not state.teams:
-        st.caption("No teams yet.")
+        st.caption(_text("teams.none"))
         return
 
     for team in state.teams:
         cols = st.columns([0.4, 3, 1])
         cols[0].color_picker(
-            "Color",
+            _text("teams.color_collapsed"),
             value=team.color,
             key=f"color_{team.id}",
             disabled=True,
@@ -145,59 +175,57 @@ def render_teams(state: AppState) -> None:
         )
         cols[1].markdown(f"### {team.name}")
 
-        if not state.games and cols[2].button("Remove", key=f"remove_{team.id}"):
+        if not state.games and cols[2].button(
+            _text("teams.remove"),
+            key=f"remove_{team.id}",
+        ):
             _remove_team(state, team.id)
             st.rerun()
 
     st.divider()
-    st.subheader("Session Reset")
-    st.caption(
-        "Use this if you want to clear saved results or start the evening "
-        "from scratch."
-    )
+    st.subheader(_text("teams.reset_title"))
+    st.caption(_text("teams.reset_caption"))
 
-    if st.button("Reset Game Night Session"):
+    if st.button(_text("teams.reset_button")):
         _reset_session_dialog(state)
 
 
 def render_add_simple_game_result(state: AppState) -> None:
-    st.title("Add Simple Game")
+    st.title(_text("nav.simple_game"))
 
     if len(state.teams) < 2:
-        st.info("Add at least two teams before saving game results.")
+        st.info(_text("game.need_two_teams"))
         return
 
     form_column, scoreboard_column = st.columns([0.62, 0.38], gap="large")
 
     with form_column:
         input_mode = st.radio(
-            "Input mode",
-            ["Point Mode", "Rank Mode"],
+            _text("game.input_mode"),
+            ["points", "rank"],
             horizontal=True,
             key="simple_input_mode",
+            format_func=_input_mode_label,
         )
         point_direction = "score"
 
-        if input_mode == "Point Mode":
+        if input_mode == "points":
             point_direction = _point_direction_input(
                 "simple_point_direction"
             )
             st.caption(_point_mode_caption(point_direction))
         else:
-            st.caption(
-                "Ties are allowed with skipped places, for example "
-                "1, 2, 2, 4."
-            )
+            st.caption(_text("game.tie_pattern_caption"))
 
         with st.form("direct_ranking_game"):
-            game_name = st.text_input("Game name")
+            game_name = st.text_input(_text("game.name"))
 
-            if input_mode == "Rank Mode":
+            if input_mode == "rank":
                 inputs = _ranking_inputs(state, "simple_rank")
             else:
                 inputs = _point_inputs(state, "simple_points")
 
-            submitted = st.form_submit_button("Save result")
+            submitted = st.form_submit_button(_text("game.save_result"))
 
         if submitted:
             _save_simple_game(
@@ -213,47 +241,54 @@ def render_add_simple_game_result(state: AppState) -> None:
 
 
 def render_add_multi_round_game_result(state: AppState) -> None:
-    st.title("Add Multi-Round Game")
+    st.title(_text("nav.multi_round_game"))
 
     if len(state.teams) < 2:
-        st.info("Add at least two teams before saving game results.")
+        st.info(_text("game.need_two_teams"))
         return
 
     form_column, scoreboard_column = st.columns([0.62, 0.38], gap="large")
 
     with form_column:
-        game_name = st.text_input("Game name", key="multi_round_game_name")
+        game_name = st.text_input(
+            _text("game.name"),
+            key="multi_round_game_name",
+        )
         input_mode = st.radio(
-            "Input mode",
-            ["Point Mode", "Rank Mode"],
+            _text("game.input_mode"),
+            ["points", "rank"],
             horizontal=True,
             key="round_input_mode",
+            format_func=_input_mode_label,
         )
         point_direction = "score"
 
-        if input_mode == "Point Mode":
+        if input_mode == "points":
             point_direction = _point_direction_input(
                 "multi_round_point_direction"
             )
             st.caption(_point_mode_caption(point_direction))
 
         round_count = st.number_input(
-            "Rounds",
+            _text("game.rounds"),
             min_value=1,
             max_value=20,
             value=3,
             step=1,
         )
         active_round = st.radio(
-            "Current round",
+            _text("game.current_round"),
             list(range(1, int(round_count) + 1)),
             horizontal=True,
-            format_func=lambda number: f"Round {number}",
+            format_func=lambda number: _text(
+                "game.round_label",
+                number=number,
+            ),
             key="multi_round_active_round",
         )
-        st.markdown("**Round inputs**")
+        st.markdown(f"**{_text('game.round_inputs')}**")
 
-        if input_mode == "Point Mode":
+        if input_mode == "points":
             rounds = _round_point_inputs(
                 state,
                 "multi_round_points",
@@ -265,10 +300,7 @@ def render_add_multi_round_game_result(state: AppState) -> None:
                 "point_direction": point_direction,
             }
         else:
-            st.caption(
-                "Use this if the final game ranking is already known. "
-                "Ties are allowed with skipped places."
-            )
+            st.caption(_text("game.final_ranking_caption"))
             with st.container(border=True):
                 inputs = {
                     "ranking": _ranking_inputs(
@@ -277,7 +309,7 @@ def render_add_multi_round_game_result(state: AppState) -> None:
                     )
                 }
 
-        if st.button("End Game and Save Result", type="primary"):
+        if st.button(_text("game.end_and_save"), type="primary"):
             _save_multi_round_game(state, game_name, input_mode, inputs)
 
     with scoreboard_column:
@@ -285,10 +317,10 @@ def render_add_multi_round_game_result(state: AppState) -> None:
 
 
 def render_add_cutting_game_result(state: AppState) -> None:
-    st.title("Add Cutting Game")
+    st.title(_text("nav.cutting_game"))
 
     if len(state.teams) < 2:
-        st.info("Add at least two teams before saving game results.")
+        st.info(_text("game.need_two_teams"))
         return
 
     input_column, visual_column = st.columns(
@@ -297,21 +329,27 @@ def render_add_cutting_game_result(state: AppState) -> None:
     )
 
     with input_column:
-        game_name = st.text_input("Game name", value="Cutting Challenge")
+        game_name = st.text_input(
+            _text("game.name"),
+            value=_text("cutting.default_name"),
+        )
         round_count = st.number_input(
-            "Objects / rounds",
+            _text("cutting.objects_rounds"),
             min_value=1,
             max_value=20,
             value=3,
             step=1,
         )
         active_round = st.radio(
-            "Current round",
+            _text("game.current_round"),
             list(range(1, int(round_count) + 1)),
             horizontal=True,
-            format_func=lambda number: f"Round {number}",
+            format_func=lambda number: _text(
+                "game.round_label",
+                number=number,
+            ),
         )
-        st.markdown("**Round inputs**")
+        st.markdown(f"**{_text('game.round_inputs')}**")
         cutting_rounds = _cutting_round_inputs(
             state,
             int(round_count),
@@ -324,7 +362,7 @@ def render_add_cutting_game_result(state: AppState) -> None:
         )
         ranking = ranking_from_scores(game_points)
 
-        if st.button("End Game and Save Result", type="primary"):
+        if st.button(_text("game.end_and_save"), type="primary"):
             _save_cutting_game(
                 state,
                 game_name,
@@ -335,7 +373,7 @@ def render_add_cutting_game_result(state: AppState) -> None:
             )
 
     with visual_column:
-        st.subheader("Live Cutting Performance")
+        st.subheader(_text("cutting.live_performance"))
         render_cutting_round_visual(
             state,
             cutting_rounds[int(active_round) - 1],
@@ -343,7 +381,7 @@ def render_add_cutting_game_result(state: AppState) -> None:
             int(active_round),
         )
 
-        with st.expander("Game totals", expanded=False):
+        with st.expander(_text("cutting.game_totals"), expanded=False):
             render_cutting_game_totals(state, game_points, ranking)
 
 
@@ -357,10 +395,13 @@ def _cutting_round_inputs(
     for index in range(1, round_count + 1):
         expanded = index == active_round
 
-        with st.expander(f"Round {index}", expanded=expanded):
+        with st.expander(
+            _text("game.round_label", number=index),
+            expanded=expanded,
+        ):
             object_name = st.text_input(
-                "Object",
-                value=f"Object {index}",
+                _text("cutting.object"),
+                value=_text("cutting.object_default", number=index),
                 key=f"cutting_object_{index}",
             )
             weights = {}
@@ -369,7 +410,7 @@ def _cutting_round_inputs(
                 st.markdown(f"**{team.name}**")
                 columns = st.columns(2)
                 part_a = columns[0].number_input(
-                    "Part A weight",
+                    _text("cutting.part_a_weight"),
                     min_value=0.0,
                     value=1.0,
                     step=0.1,
@@ -377,7 +418,7 @@ def _cutting_round_inputs(
                     key=f"cutting_{index}_{team.id}_a",
                 )
                 part_b = columns[1].number_input(
-                    "Part B weight",
+                    _text("cutting.part_b_weight"),
                     min_value=0.0,
                     value=1.0,
                     step=0.1,
@@ -417,12 +458,22 @@ def render_cutting_round_visual(
 ) -> None:
     team_names = team_name_by_id(state.teams)
     weights = round_data["weights"]
-    object_name = str(round_data.get("object") or f"Object {round_number}")
+    object_name = str(
+        round_data.get("object")
+        or _text("cutting.object_default", number=round_number)
+    )
 
     if not isinstance(weights, dict):
         return
 
-    st.markdown(f"#### Round {round_number}: {object_name}")
+    st.markdown(
+        "#### "
+        + _text(
+            "cutting.round_heading",
+            number=round_number,
+            object_name=object_name,
+        )
+    )
     penalties = cutting_round_penalties(weights)
     ranking = ranking_from_scores(penalties, higher_is_better=False)
     sorted_team_ids = sorted(
@@ -458,7 +509,7 @@ def render_cutting_game_totals(
     for team in sorted_teams:
         st.write(
             f"#{ranking[team.id]} - {team.name} - "
-            f"{game_points[team.id]} round-winner points"
+            f"{_text('cutting.round_winner_points', points=game_points[team.id])}"
         )
 
 
@@ -485,7 +536,8 @@ def render_cutting_team_row(
                 <span class="compact-color-dot"></span>
                 <span>{safe_name}</span>
             </div>
-            <div class="cutting-bar" aria-label="Cut balance">
+            <div class="cutting-bar"
+                aria-label="{_html_text("cutting.balance_label")}">
                 <div class="cutting-part cutting-part-a"
                     style="width: {part_a_percent:.2f}%;">
                     {part_a:.1f}
@@ -496,7 +548,8 @@ def render_cutting_team_row(
                 </div>
             </div>
             <div class="cutting-stats">
-                #{rank} &middot; {round_points} pts &middot; {penalty:.1%}
+                #{rank} &middot; {round_points}
+                {_html_text("cutting.points_short")} &middot; {penalty:.1%}
             </div>
         </div>
         """,
@@ -505,16 +558,16 @@ def render_cutting_team_row(
 
 
 def render_compact_scoreboard(state: AppState) -> None:
-    st.subheader("Evening Scoreboard")
+    st.subheader(_text("scoreboard.compact_title"))
 
     rows = build_scoreboard(state)
 
     st.markdown(
-        """
+        f"""
         <div class="compact-scoreboard compact-scoreboard-header">
-            <div>Rank</div>
-            <div>Name</div>
-            <div>Points</div>
+            <div>{_html_text("scoreboard.rank")}</div>
+            <div>{_html_text("scoreboard.name")}</div>
+            <div>{_html_text("scoreboard.points")}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -572,25 +625,21 @@ def _point_inputs(state: AppState, key_prefix: str) -> dict[str, int]:
 
 def _point_direction_input(key: str) -> str:
     mode = st.radio(
-        "Point scoring",
-        ["Score Points", "Penalty Points"],
+        _text("game.point_scoring"),
+        ["score", "penalty"],
         horizontal=True,
         key=key,
+        format_func=_point_direction_label,
     )
 
-    if mode == "Penalty Points":
-        return "penalty"
-
-    return "score"
+    return mode
 
 
 def _point_mode_caption(point_direction: str) -> str:
     if point_direction == "penalty":
-        return (
-            "Lower penalty points rank higher. Ties produce tied ranks."
-        )
+        return _text("game.penalty_caption")
 
-    return "Higher score points rank higher. Ties produce tied ranks."
+    return _text("game.score_caption")
 
 
 def _round_point_inputs(
@@ -604,7 +653,10 @@ def _round_point_inputs(
     for index in range(1, round_count + 1):
         expanded = index == active_round
 
-        with st.expander(f"Round {index}", expanded=expanded):
+        with st.expander(
+            _text("game.round_label", number=index),
+            expanded=expanded,
+        ):
             rounds.append(
                 _point_inputs(state, f"{key_prefix}_{index}")
             )
@@ -613,10 +665,10 @@ def _round_point_inputs(
 
 
 def render_game_history(state: AppState) -> None:
-    st.title("Game History")
+    st.title(_text("nav.history"))
 
     if not state.games:
-        st.info("No games have been saved yet.")
+        st.info(_text("history.empty"))
         return
 
     names = team_name_by_id(state.teams)
@@ -624,8 +676,12 @@ def render_game_history(state: AppState) -> None:
     for game in reversed(state.games):
         with st.expander(game.name, expanded=False):
             st.caption(
-                f"Mode: {game.mode.replace('_', ' ')} / "
-                f"{game.input_mode} input{_history_point_direction(game)}"
+                _text(
+                    "history.mode_caption",
+                    mode=_history_mode_label(game.mode),
+                    input_mode=_history_input_mode_label(game.input_mode),
+                    suffix=_history_point_direction(game),
+                )
             )
             rows = sorted(
                 game.ranking.items(),
@@ -637,14 +693,20 @@ def render_game_history(state: AppState) -> None:
                 game_points = game.game_points.get(team_id)
                 detail = ""
                 if game_points is not None:
-                    detail = f" - game points: {game_points:g}"
+                    detail = (
+                        f" - {_text('history.game_points')}: "
+                        f"{game_points:g}"
+                    )
 
                 st.write(
                     f"#{rank} - {names.get(team_id, team_id)} - "
-                    f"{points} evening points{detail}"
+                    f"{points} {_text('history.evening_points')}{detail}"
                 )
 
-            if st.button("Remove this entry", key=f"delete_game_{game.id}"):
+            if st.button(
+                _text("history.remove_entry"),
+                key=f"delete_game_{game.id}",
+            ):
                 _delete_game_dialog(state, game.id)
 
 
@@ -652,11 +714,11 @@ def _add_team(state: AppState, name: str, color: str) -> None:
     normalized_name = name.strip()
 
     if not normalized_name:
-        st.error("Team name cannot be empty.")
+        st.error(_text("teams.name_empty"))
         return
 
     if any(team.name.lower() == normalized_name.lower() for team in state.teams):
-        st.error("Team names must be unique.")
+        st.error(_text("teams.name_unique"))
         return
 
     next_state = replace(
@@ -664,7 +726,7 @@ def _add_team(state: AppState, name: str, color: str) -> None:
         teams=[*state.teams, Team.create(normalized_name, color)],
     )
     _persist(next_state)
-    st.success("Team added.")
+    st.success(_text("teams.added"))
     st.rerun()
 
 
@@ -676,66 +738,89 @@ def _remove_team(state: AppState, team_id: str) -> None:
     _persist(next_state)
 
 
-@st.dialog("Remove Game History Entry")
+@st.dialog(t("en", "dialog.delete_game_title"))
+def _delete_game_dialog_en(state: AppState, game_id: str) -> None:
+    _delete_game_dialog_content(state, game_id)
+
+
+@st.dialog(t("de", "dialog.delete_game_title"))
+def _delete_game_dialog_de(state: AppState, game_id: str) -> None:
+    _delete_game_dialog_content(state, game_id)
+
+
 def _delete_game_dialog(state: AppState, game_id: str) -> None:
+    if _locale() == "de":
+        _delete_game_dialog_de(state, game_id)
+        return
+
+    _delete_game_dialog_en(state, game_id)
+
+
+def _delete_game_dialog_content(state: AppState, game_id: str) -> None:
     game = next((item for item in state.games if item.id == game_id), None)
 
     if game is None:
-        st.error("This game entry no longer exists.")
-        if st.button("Close"):
+        st.error(_text("dialog.delete_missing"))
+        if st.button(_text("dialog.close")):
             st.rerun()
         return
 
-    st.write(f"Remove `{game.name}` from the game history?")
-    st.warning(
-        "This will also remove this game's contribution from the evening "
-        "scoreboard."
-    )
+    st.write(_text("dialog.delete_question", game_name=game.name))
+    st.warning(_text("dialog.delete_warning"))
 
     columns = st.columns(2)
 
-    if columns[0].button("Remove entry", type="primary"):
+    if columns[0].button(_text("dialog.delete_confirm"), type="primary"):
         _delete_game(state, game_id)
         st.rerun()
 
-    if columns[1].button("Cancel"):
+    if columns[1].button(_text("dialog.cancel")):
         st.rerun()
 
 
-@st.dialog("Reset Game Night Session")
+@st.dialog(t("en", "dialog.reset_title"))
+def _reset_session_dialog_en(state: AppState) -> None:
+    _reset_session_dialog_content(state)
+
+
+@st.dialog(t("de", "dialog.reset_title"))
+def _reset_session_dialog_de(state: AppState) -> None:
+    _reset_session_dialog_content(state)
+
+
 def _reset_session_dialog(state: AppState) -> None:
+    if _locale() == "de":
+        _reset_session_dialog_de(state)
+        return
+
+    _reset_session_dialog_en(state)
+
+
+def _reset_session_dialog_content(state: AppState) -> None:
     choice = st.radio(
-        "Choose what to reset.",
-        [
-            "Continue with current game night",
-            "Reset results and keep teams",
-            "Reset whole session including teams",
-        ],
+        _text("dialog.reset_choice"),
+        ["continue", "results", "all"],
+        format_func=_reset_choice_label,
     )
 
-    if choice == "Reset results and keep teams":
-        st.warning(
-            "All game history and evening points will be removed. Teams stay "
-            "configured."
-        )
-    elif choice == "Reset whole session including teams":
-        st.warning(
-            "All teams, game history, and evening points will be removed."
-        )
+    if choice == "results":
+        st.warning(_text("dialog.reset_results_warning"))
+    elif choice == "all":
+        st.warning(_text("dialog.reset_all_warning"))
     else:
-        st.info("No saved data will be changed.")
+        st.info(_text("dialog.reset_none_info"))
 
     columns = st.columns(2)
 
-    if columns[0].button("Apply selection", type="primary"):
-        if choice == "Reset results and keep teams":
+    if columns[0].button(_text("dialog.apply_selection"), type="primary"):
+        if choice == "results":
             _reset_results(state)
-        elif choice == "Reset whole session including teams":
+        elif choice == "all":
             _reset_all()
 
         st.rerun()
 
-    if columns[1].button("Cancel"):
+    if columns[1].button(_text("dialog.cancel")):
         st.rerun()
 
 
@@ -769,38 +854,52 @@ def _save_game_result(state: AppState, game: GameResult) -> None:
 def _commit_game_result(state: AppState, game: GameResult) -> None:
     next_state = replace(state, games=[*state.games, game])
     _persist(next_state)
-    st.session_state["_target_view"] = "Scoreboard"
+    st.session_state["_target_view"] = "scoreboard"
     st.rerun()
 
 
-@st.dialog("Tie detected")
+@st.dialog(t("en", "dialog.tie_title"))
+def _tie_resolution_dialog_en(state: AppState, game: GameResult) -> None:
+    _tie_resolution_dialog_content(state, game)
+
+
+@st.dialog(t("de", "dialog.tie_title"))
+def _tie_resolution_dialog_de(state: AppState, game: GameResult) -> None:
+    _tie_resolution_dialog_content(state, game)
+
+
 def _tie_resolution_dialog(state: AppState, game: GameResult) -> None:
+    if _locale() == "de":
+        _tie_resolution_dialog_de(state, game)
+        return
+
+    _tie_resolution_dialog_en(state, game)
+
+
+def _tie_resolution_dialog_content(
+    state: AppState,
+    game: GameResult,
+) -> None:
     tied_groups = tied_rank_groups(game.ranking)
     team_names = team_name_by_id(state.teams)
 
-    st.write(
-        "This game result contains at least one tie. You can keep the tie "
-        "scoring, enter the result of an tie-break, or abort the save."
-    )
+    st.write(_text("dialog.tie_intro"))
 
     choice = st.radio(
-        "Tie handling",
-        [
-            "Use tie scoring",
-            "Resolve tied teams after tie-break",
-            "Abort save and return to game",
-        ],
+        _text("dialog.tie_handling"),
+        ["use_ties", "resolve", "abort"],
+        format_func=_tie_choice_label,
     )
 
-    if choice == "Use tie scoring":
-        st.info("The tied teams will receive the same evening points.")
-        if st.button("Save with ties", type="primary"):
+    if choice == "use_ties":
+        st.info(_text("dialog.tie_same_points"))
+        if st.button(_text("dialog.tie_save_with_ties"), type="primary"):
             _commit_game_result(state, game)
         return
 
-    if choice == "Abort save and return to game":
-        st.warning("No game result will be saved.")
-        if st.button("Abort save", type="primary"):
+    if choice == "abort":
+        st.warning(_text("dialog.tie_no_save"))
+        if st.button(_text("dialog.tie_abort_save"), type="primary"):
             st.rerun()
         return
 
@@ -812,11 +911,8 @@ def _tie_resolution_dialog(state: AppState, game: GameResult) -> None:
             team_ids,
             key=lambda team_id: team_names.get(team_id, "").lower(),
         )
-        st.markdown(f"**Tie for rank #{rank}**")
-        st.caption(
-            "Assign each tied team a unique tie-break place. Place 1 is the "
-            "best team within this tied group."
-        )
+        st.markdown(f"**{_text('dialog.tie_for_rank', rank=rank)}**")
+        st.caption(_text("dialog.tie_assign_caption"))
 
         places_by_team = {}
 
@@ -826,12 +922,15 @@ def _tie_resolution_dialog(state: AppState, game: GameResult) -> None:
                 list(range(1, len(ordered_team_ids) + 1)),
                 index=index,
                 key=f"tie_break_{game.id}_{rank}_{team_id}",
-                format_func=lambda place: f"{place}. within tied group",
+                format_func=lambda place: _text(
+                    "dialog.tie_place",
+                    place=place,
+                ),
             )
 
         if len(set(places_by_team.values())) != len(places_by_team):
             has_duplicate_places = True
-            st.warning("Each tied team needs a unique tie-break place.")
+            st.warning(_text("dialog.tie_duplicate_places"))
 
         tie_break_places[rank] = places_by_team
 
@@ -846,6 +945,12 @@ def _tie_resolution_dialog(state: AppState, game: GameResult) -> None:
                 game.ranking,
                 tie_break_places,
             )
+        except TieBreakValidationError as error:
+            st.error(
+                _text(error.message_key, **error.message_params)
+            )
+            disabled = True
+            resolved_game = game
         except ValueError as error:
             st.error(str(error))
             disabled = True
@@ -868,7 +973,7 @@ def _tie_resolution_dialog(state: AppState, game: GameResult) -> None:
             )
 
     if st.button(
-        "Save resolved order",
+        _text("dialog.tie_save_resolved"),
         type="primary",
         disabled=disabled,
     ):
@@ -885,10 +990,10 @@ def _save_simple_game(
     normalized_name = game_name.strip()
 
     if not normalized_name:
-        st.error("Game name cannot be empty.")
+        st.error(_text("game.name_empty"))
         return
 
-    if input_mode == "Rank Mode":
+    if input_mode == "rank":
         ranking = inputs
         validation = validate_competition_ranking(
             ranking,
@@ -896,7 +1001,7 @@ def _save_simple_game(
         )
 
         if not validation.is_valid:
-            st.error(validation.message)
+            st.error(_validation_message(validation))
             return
 
         game_points = {}
@@ -932,20 +1037,20 @@ def _save_multi_round_game(
     team_ids = [team.id for team in state.teams]
 
     if not normalized_name:
-        st.error("Game name cannot be empty.")
+        st.error(_text("game.name_empty"))
         return
 
-    if input_mode == "Rank Mode":
+    if input_mode == "rank":
         ranking = inputs["ranking"]
 
         if not isinstance(ranking, dict):
-            st.error("Invalid ranking input.")
+            st.error(_text("game.invalid_ranking_input"))
             return
 
         validation = validate_competition_ranking(ranking, team_ids)
 
         if not validation.is_valid:
-            st.error(validation.message)
+            st.error(_validation_message(validation))
             return
 
         rounds = []
@@ -957,11 +1062,11 @@ def _save_multi_round_game(
         raw_point_direction = inputs.get("point_direction", "score")
 
         if not isinstance(rounds, list):
-            st.error("Invalid round input.")
+            st.error(_text("game.invalid_round_input"))
             return
 
         if not isinstance(raw_point_direction, str):
-            st.error("Invalid point scoring input.")
+            st.error(_text("game.invalid_point_scoring_input"))
             return
 
         point_direction = raw_point_direction
@@ -997,13 +1102,13 @@ def _save_cutting_game(
     normalized_name = game_name.strip()
 
     if not normalized_name:
-        st.error("Game name cannot be empty.")
+        st.error(_text("game.name_empty"))
         return
 
     validation = _validate_cutting_rounds(cutting_rounds)
 
     if validation:
-        st.error(validation)
+        st.error(_text(validation[0], **validation[1]))
         return
 
     points = award_points(ranking, len(state.teams))
@@ -1023,19 +1128,16 @@ def _save_cutting_game(
 
 def _validate_cutting_rounds(
     cutting_rounds: list[dict[str, object]],
-) -> str | None:
+) -> tuple[str, dict[str, object]] | None:
     for index, round_data in enumerate(cutting_rounds, start=1):
         weights = round_data["weights"]
 
         if not isinstance(weights, dict):
-            return f"Round {index} has invalid weight data."
+            return ("cutting.invalid_weights", {"number": index})
 
         for part_a, part_b in weights.values():
             if part_a <= 0 or part_b <= 0:
-                return (
-                    f"Round {index} needs both part weights for every team "
-                    "before saving."
-                )
+                return ("cutting.missing_weights", {"number": index})
 
     return None
 
@@ -1069,9 +1171,68 @@ def _history_point_direction(game: GameResult) -> str:
         return ""
 
     if game.point_direction == "penalty":
-        return " / penalty points"
+        return _text("history.point_direction_penalty")
 
-    return " / score points"
+    return _text("history.point_direction_score")
+
+
+def _history_mode_label(mode: str) -> str:
+    key = f"history.mode.{mode}"
+    fallback = mode.replace("_", " ")
+    label = _text(key)
+
+    if label == key:
+        return fallback
+
+    return label
+
+
+def _history_input_mode_label(input_mode: str) -> str:
+    key = f"history.input_mode.{input_mode}"
+    label = _text(key)
+
+    if label == key:
+        return input_mode
+
+    return label
+
+
+def _input_mode_label(input_mode: str) -> str:
+    if input_mode == "rank":
+        return _text("game.input_rank")
+
+    return _text("game.input_points")
+
+
+def _point_direction_label(direction: str) -> str:
+    if direction == "penalty":
+        return _text("game.penalty_points")
+
+    return _text("game.score_points")
+
+
+def _reset_choice_label(choice: str) -> str:
+    labels = {
+        "continue": "dialog.reset_continue",
+        "results": "dialog.reset_results",
+        "all": "dialog.reset_all",
+    }
+    return _text(labels[choice])
+
+
+def _tie_choice_label(choice: str) -> str:
+    labels = {
+        "use_ties": "dialog.tie_use_scoring",
+        "resolve": "dialog.tie_resolve",
+        "abort": "dialog.tie_abort_return",
+    }
+    return _text(labels[choice])
+
+
+def _validation_message(validation: object) -> str:
+    message_key = getattr(validation, "message_key")
+    message_params = getattr(validation, "message_params")
+    return _text(message_key, **message_params)
 
 
 def _ensure_state() -> None:
@@ -1079,11 +1240,49 @@ def _ensure_state() -> None:
         st.session_state.app_state = load_state()
 
 
+def _locale() -> str:
+    return normalize_locale(st.session_state.get("locale"))
+
+
+def _text(key: str, **values: object) -> str:
+    return t(_locale(), key, **values)
+
+
+def _html_text(key: str, **values: object) -> str:
+    return escape(_text(key, **values))
+
+
 def _apply_pending_navigation() -> None:
     target_view = st.session_state.pop("_target_view", None)
 
+    if target_view in LEGACY_PAGE_IDS:
+        target_view = LEGACY_PAGE_IDS[target_view]
+
     if target_view in PAGES:
         st.session_state.selected_view = target_view
+
+
+def _normalize_selected_view() -> None:
+    selected_view = st.session_state.get("selected_view")
+
+    if selected_view in LEGACY_PAGE_IDS:
+        st.session_state.selected_view = LEGACY_PAGE_IDS[selected_view]
+    elif selected_view not in PAGES:
+        st.session_state.selected_view = "scoreboard"
+
+    for key in ("simple_input_mode", "round_input_mode"):
+        value = st.session_state.get(key)
+        if value == "Point Mode":
+            st.session_state[key] = "points"
+        elif value == "Rank Mode":
+            st.session_state[key] = "rank"
+
+    for key in ("simple_point_direction", "multi_round_point_direction"):
+        value = st.session_state.get(key)
+        if value == "Score Points":
+            st.session_state[key] = "score"
+        elif value == "Penalty Points":
+            st.session_state[key] = "penalty"
 
 
 def _persist(state: AppState) -> None:
@@ -1118,6 +1317,25 @@ def _apply_styles() -> None:
             .block-container {
                 padding-top: 2rem;
                 max-width: 1180px;
+            }
+
+            [data-testid="stSidebar"] {
+                position: relative;
+            }
+
+            [data-testid="stSidebar"]
+            [data-testid="stVerticalBlock"]
+            > div:has(.sidebar-language-anchor) {
+                display: none;
+            }
+
+            [data-testid="stSidebar"]
+            [data-testid="stVerticalBlock"]
+            > div:has(.sidebar-language-anchor) + div {
+                bottom: 1.25rem;
+                left: 1.5rem;
+                position: absolute;
+                right: 1.5rem;
             }
 
             h1 {
